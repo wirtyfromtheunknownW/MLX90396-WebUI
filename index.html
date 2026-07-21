@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MLX90396 Web Serial Monitor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background: #1A2027; /* Dark background matching your snippet */
+      color: #E9F2FF;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px;
+    }
+    .app-shell {
+      width: min(800px, 100%); background: #232A34; border-radius: 24px;
+      padding: 32px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+      border: 1px solid #2D3742;
+    }
+    
+    /* Global Controls */
+    .header-row {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
+      border-bottom: 1px solid #2D3742; padding-bottom: 16px;
+    }
+    .header-row h1 { margin: 0; font-size: 1.5rem; }
+    
+    button {
+      border: none; border-radius: 8px; cursor: pointer; background: #00ADEF; color: white;
+      font-size: 0.95rem; padding: 10px 20px; transition: 0.2s; font-weight: 600;
+    }
+    button:hover { background: #008ec1; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-danger { background: #dc2626; } .btn-danger:hover { background: #b91c1c; }
+    .btn-secondary { background: #2F3F58; } .btn-secondary:hover { background: #28384F; }
+
+    /* Tabs */
+    .tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+    .tab-btn {
+      background: transparent; color: #A9B8C9; border: 2px solid transparent; 
+      border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer;
+    }
+    .tab-btn.active { background: #132943; color: #E9F2FF; border-color: #1F3A62; }
+    .tab-btn:hover:not(.active) { background: #1a273b; }
+    
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* --- COMPILED SCSS 3D JOYSTICK --- */
+    .joystick-wrapper {
+      display: flex; justify-content: center; align-items: center; 
+      padding: 60px; min-height: 400px; position: relative;
+    }
+    .joystick {
+      background: radial-gradient(at 75% 75%, #f2f2f2 0%, #d9d9d9 100%);
+      box-shadow: 0 -5px 5px rgba(255, 255, 255, 0.1), 0 5px 5px rgba(255, 255, 255, 0.05), 
+                  inset 0 5px 5px rgba(0, 0, 0, 0.02), inset 0 -5px 5px rgba(255, 255, 255, 0.05);
+      position: relative;
+      height: 200px;
+      width: 200px;
+      border-radius: 50%;
+    }
+    .joystick__ball {
+      background: radial-gradient(at 25% 25%, #f2f2f2 0%, #d9d9d9 100%);
+      position: absolute; height: 70%; width: 70%; border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      transform-style: preserve-3d; perspective: 1000px;
+      box-shadow: inset -5px -10px 40px rgba(0, 0, 0, 0.05), inset 0px 0px 10px rgba(0, 0, 0, 0.3), 
+                  inset 0px 0px 5px rgba(0, 0, 0, 0.5), inset 0px 0px 3px 1px rgba(0, 0, 0, 0.51), 
+                  0px 0px 10px rgba(0, 0, 0, 0.3);
+    }
+    .joystick__zero {
+      position: absolute; z-index: 4; height: 30%; width: 30%; border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+    }
+    
+    /* Dynamic Stick powered by JS variables */
+    .joystick__stick {
+      background: radial-gradient(at 50% 75%, #f2f2f2 0%, #d9d9d9 100%);
+      position: absolute; z-index: 2; height: 50%; width: 50%; border-radius: 50%;
+      top: 50%; left: 50%; margin: -25% -25%;
+      transition: transform 100ms ease, box-shadow 100ms ease;
+      
+      transform: translate(calc(var(--tx, 0) * 1%), calc(var(--ty, 0) * 1%)) 
+                 rotateX(calc(var(--ty, 0) * 0.5deg)) 
+                 rotateY(calc(var(--tx, 0) * -0.5deg));
+                 
+      box-shadow: inset calc(var(--tx, 0) * 0.25px) calc(var(--ty, 0) * 0.25px) 10px rgba(255, 255, 255, 0.3),
+                  inset calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 10px rgba(0, 0, 0, 0.15),
+                  0 2px 10px -5px rgba(0, 0, 0, 0.7),
+                  0 4px 20px -10px rgba(0, 0, 0, 0.2),
+                  calc(var(--ty, 0) * 0.5px) 0 40px -20px rgba(0, 0, 0, 0.2),
+                  calc(var(--ty, 0) * -0.5px) 50px 40px -20px rgba(0, 0, 0, 0.2);
+    }
+    .joystick__stick:before {
+      content: ''; background: #fff; position: absolute; top: 10px; left: 49px;
+      width: 3px; height: 3px; border-radius: 50%;
+      box-shadow: 0 2px 3px #000, 39px 40px #fff, 39px 42px 3px #000, 0px 80px #fff, 
+                  0px 82px 3px #000, -39px 40px #fff, -39px 42px 3px #000;
+      opacity: 0.15;
+    }
+    .joystick__stick:after {
+      content: ''; position: absolute; top: 50%; left: 50%; width: 50%; height: 50%;
+      margin: -25% -25%; border-radius: 50%;
+      box-shadow: calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 20px -10px rgba(0,0,0,0.8);
+      filter: blur(5px); opacity: 0.4;
+    }
+
+    /* LEDs */
+    .joystick__led {
+      position: absolute; top: -40px; left: 50%; width: 3px; height: 3px;
+      border-radius: 50%; background: rgba(0, 0, 0, 0.7);
+      transform-origin: 0 140px; transition: background 150ms ease, box-shadow 150ms ease;
+    }
+    /* Dynamic LED Classes controlled by JS */
+    .led-active { background: #fff; box-shadow: 0 0 5px #fff; }
+    .led-low-1 { background: rgba(255,255,255,0.5); box-shadow: 0 0 5px rgba(255,255,255,0.5); }
+    .led-low-2 { background: rgba(255,255,255,0.1); box-shadow: 0 0 5px rgba(255,255,255,0.1); }
+
+    /* Terminal Layout */
+    .terminal-wrapper { display: flex; gap: 16px; align-items: stretch; }
+    .main-terminal { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+    .log-window {
+      height: 350px; background: #000; border-radius: 12px; padding: 12px;
+      font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
+      overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap;
+      border: 1px solid #2D3742; color: #D9E2F2;
+    }
+    .log-echo { color: #4db2ff; } .log-rx { color: #d9dedc; } 
+    .log-okprompt { color: #59ffb0; } .log-badprompt { color: #ff7a7a; }
+    .input-row { display: flex; gap: 8px; }
+    .input-row input { 
+      flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #1F3A62; 
+      background: #132943; color: #E9F2FF;
+    }
+    .settings-row { display: flex; gap: 16px; font-size: 0.85rem; color: #A9B8C9; }
+    .sidebar { width: 180px; display: flex; flex-direction: column; gap: 8px; }
+    .sidebar h3 { margin: 0; font-size: 0.9rem; color: #E9F2FF; text-transform: uppercase; }
+    .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
+    .hist-item { background: #232A34; padding: 6px; border-radius: 6px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    
+    <div class="header-row">
+      <h1>MLX90396 Dashboard</h1>
+      <button id="btn-connect">Connect USB</button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-target="view-joystick">Joystick Demo</button>
+      <button class="tab-btn" data-target="view-terminal">SCPI Terminal</button>
+    </div>
+
+    <!-- VIEW 1: 3D JOYSTICK -->
+    <div id="view-joystick" class="view active">
+      <div class="joystick-wrapper">
+        <div class="joystick" id="joystick-base">
+          <div class="joystick__zero"></div>
+          <div class="joystick__stick" id="joystick-stick"></div>
+          <div class="joystick__ball"></div>
+        </div>
+      </div>
+      
+      <!-- DEMO CONTROLS -->
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
+        <button id="btn-start-demo" disabled>Start Demo Loop</button>
+        <button id="btn-stop-demo" class="btn-secondary" disabled>Stop Demo</button>
+      </div>
+
+      <!-- NEW: MINI TERMINAL -->
+      <div id="mini-log-window" class="log-window" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
+
+      <!-- NEW: API TEST BUTTONS -->
+      <div style="margin-top: 20px; text-align: center;">
+        <h4 style="color: #A9B8C9; margin-bottom: 12px; font-size: 0.9rem; text-transform: uppercase;">Test Individual API Commands</h4>
+        <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 600px; margin: 0 auto;">
+          <button class="api-btn btn-secondary" data-api="rt" disabled>RT</button>
+          <button class="api-btn btn-secondary" data-api="hs" disabled>HS</button>
+          <button class="api-btn btn-secondary" data-api="hr" disabled>HR</button>
+          <button class="api-btn btn-secondary" data-api="ex" disabled>EX (Idle)</button>
+          <button class="api-btn btn-secondary" data-api="rr" disabled>RR (Reg 0)</button>
+          <button class="api-btn btn-secondary" data-api="wr" disabled>WR (Reg 0)</button>
+          <button class="api-btn btn-secondary" data-api="sb" disabled>SB</button>
+          <button class="api-btn btn-secondary" data-api="swoc" disabled>SWOC</button>
+          <button class="api-btn btn-secondary" data-api="sm" disabled>SM</button>
+          <button class="api-btn btn-secondary" data-api="rm_xyz" disabled>RM (XYZ)</button>
+          <button class="api-btn btn-secondary" data-api="rm_sfi" disabled>RM (SFI)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: SCPI TERMINAL -->
+    <div id="view-terminal" class="view">
+      <div class="terminal-wrapper">
+        <div class="main-terminal">
+          <div id="log-window" class="log-window"></div>
+          
+          <div class="input-row">
+            <input type="text" id="tx-input" placeholder="Type SCPI command..." disabled />
+            <button id="btn-send" disabled>Send</button>
+          </div>
+
+          <div class="settings-row">
+            <label>EOL: 
+              <select id="sel-eol">
+                <option value="\n">LF</option>
+                <option value="\r">CR</option>
+                <option value="\r\n" selected>CRLF</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
+            <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
+            <button id="btn-clear" class="btn-secondary" style="padding: 4px 12px; margin-left: auto;">Clear</button>
+          </div>
+        </div>
+
+        <div class="sidebar">
+          <h3>Quick Cmds</h3>
+          <button class="quick-cmd btn-secondary" data-cmd="*IDN?">IDN?</button>
+          <button class="quick-cmd btn-secondary" data-cmd=":SYST:INFO">INFO</button>
+          <button class="quick-cmd btn-danger" data-cmd="*RST">Reset</button>
+          <hr style="width:100%; border:0; border-top:1px solid #2D3742; margin: 8px 0;">
+          <h3>History</h3>
+          <div id="history-list" class="history-list"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
