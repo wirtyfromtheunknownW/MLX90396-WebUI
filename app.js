@@ -437,7 +437,7 @@ async function runJoystickDemo() {
   btnStopDemo.disabled = false;
   isDemoRunning = true;
 
-  const USE_HARDWARE_DEMO = true; 
+  const USE_HARDWARE_DEMO = false; 
 
   if (USE_HARDWARE_DEMO) {
     try {
