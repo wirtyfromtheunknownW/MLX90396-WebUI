@@ -894,10 +894,10 @@ btnToggleDebug.addEventListener('click', () => {
   // Toggle visibility class on the mini terminal window
   const isHidden = miniLogWindow.classList.toggle('hidden');
   
-  // Highlight the Debug button when active
-  if (isHidden) {
-    btnToggleDebug.classList.add('btn-secondary');
-  } else {
-    btnToggleDebug.classList.remove('btn-secondary');
-  }
+//   // Highlight the Debug button when active
+//   if (isHidden) {
+//     btnToggleDebug.classList.add('btn-secondary');
+//   } else {
+//     btnToggleDebug.classList.remove('btn-secondary');
+//   }
 });

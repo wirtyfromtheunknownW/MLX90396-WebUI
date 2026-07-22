@@ -3,12 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MLX90396 Web Serial Monitor</title>
+  <title>MLX90396 Web UI</title>
   <style>
     :root {
       color-scheme: light;
       font-family: Inter, system-ui, -apple-system, sans-serif;
-      background: #00354B; /* Dark background matching your snippet */
+      background-image: url('background.jpg'); 
+      background-size: cover;        /* Scales image to fill the screen */
+      background-position: center;   /* Keeps image centered */
+      background-repeat: no-repeat;  /* Prevents image tiling */
+      background-attachment: fixed;  /* Keeps background still while scrolling */
+      background-color: #00354B;     /* Fallback color while image loads */
       color: #E9F2FF;
     }
     * { box-sizing: border-box; }
@@ -16,7 +21,7 @@
       margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px;
     }
     .app-shell {
-      width: min(800px, 100%); background: #00354B; border-radius: 24px;
+      width: min(800px, 100%); background: #00354B; border-radius: 1px;
       padding: 32px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
       border: 1px solid #2D3742;
     }
@@ -29,19 +34,19 @@
     .header-row h1 { margin: 0; font-size: 1.5rem; }
     
     button {
-      border: none; border-radius: 2px; cursor: pointer; background: #65BBA9; color: white;
+      border: none; border-radius: 1px; cursor: pointer; background: #65BBA9; color: white;
       font-size: 0.95rem; padding: 10px 20px; transition: 0.2s; font-weight: 600;
     }
-    button:hover { background: #65BBA9; }
+    button:hover { background: #65BBA9; opacity: 0.6; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn-danger { background: #DB4140; } .btn-danger:hover { background: #DB4140; }
-    .btn-secondary { background: #2F3F58; } .btn-secondary:hover { background: #28384F; }
+    .btn-danger { background: #DB4140; } .btn-danger:hover { background: #DB4140;  }
+    .btn-secondary { background: #8fc1cc; } .btn-secondary:hover { background: #8fc1cc; opacity: 0.6; }
 
     /* Tabs */
     .tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
     .tab-btn {
       background: transparent; color: #A9B8C9; border: 2px solid transparent; 
-      border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer;
+      border-radius: 1px; padding: 8px 16px; font-weight: 600; cursor: pointer;
     }
     .tab-btn.active { background: #132943; color: #E9F2FF; border-color: #1F3A62; }
     .tab-btn:hover:not(.active) { background: #1a273b; }
@@ -113,7 +118,7 @@
   .mem-control-card {
     background: #00354B;
     border: 1px solid #b2c4cb;
-    border-radius: 16px;
+    border-radius: 1px;
     padding: 20px;
     margin-bottom: 20px;
     display: flex;
@@ -145,7 +150,7 @@
 
   .mem-field input {
     padding: 10px;
-    border-radius: 8px;
+    border-radius: 1px;
     border: 1px solid #1F3A62;
     background: #132943;
     color: #E9F2FF;
@@ -168,7 +173,7 @@
   .mem-table-wrapper {
     background: #00354B;
     border: 1px solid #b2c4cb;
-    border-radius: 16px;
+    border-radius: 1px;
     padding: 20px;
   }
 
@@ -188,7 +193,7 @@
   .mem-badge {
     font-size: 0.75rem;
     padding: 4px 10px;
-    border-radius: 12px;
+    border-radius: 1px;
     background: #132943;
     color: #65BBA9;
     border: 1px solid #1F3A62;
@@ -199,7 +204,7 @@
     max-height: 380px;
     overflow-y: auto;
     border: 1px solid #2D3742;
-    border-radius: 8px;
+    border-radius: 1px;
   }
 
   .mem-table {
@@ -255,7 +260,7 @@
     .terminal-wrapper { display: flex; gap: 16px; align-items: stretch; }
     .main-terminal { flex: 1; display: flex; flex-direction: column; gap: 12px; }
     .log-window {
-      height: 350px; background: #000; border-radius: 12px; padding: 12px;
+      height: 350px; background: #000; border-radius: 1px; padding: 12px;
       font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
       overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap;
       border: 1px solid #2D3742; color: #D9E2F2;
@@ -264,14 +269,14 @@
     .log-okprompt { color: #59ffb0; } .log-badprompt { color: #ff7a7a; }
     .input-row { display: flex; gap: 8px; }
     .input-row input { 
-      flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #1F3A62; 
+      flex: 1; padding: 10px; border-radius: 1px; border: 1px solid #1F3A62; 
       background: #132943; color: #E9F2FF;
     }
     .settings-row { display: flex; gap: 16px; font-size: 0.85rem; color: #A9B8C9; }
     .sidebar { width: 180px; display: flex; flex-direction: column; gap: 8px; }
     .sidebar h3 { margin: 0; font-size: 0.9rem; color: #E9F2FF; text-transform: uppercase; }
     .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
-    .hist-item { background: #232A34; padding: 6px; border-radius: 6px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
+    .hist-item { background: #232A34; padding: 6px; border-radius: 1px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
 
     /* --- CALIBRATION VIEW STYLES --- */
 .calib-layout {
@@ -283,7 +288,7 @@
 .calib-card {
   background: #00354B;
   border: 1px solid #b2c4cb;
-  border-radius: 16px;
+  border-radius: 1px;
   padding: 20px;
 }
 
@@ -299,7 +304,7 @@
   display: flex;
   gap: 12px;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: 1px;
   background: #132943;
   border: 1px solid #b2c4cb;
   opacity: 0.5;
@@ -359,7 +364,7 @@
 
 .canvas-wrapper {
   background: #132943;
-  border-radius: 12px;
+  border-radius: 1px;
   border: 1px solid #1F3A62;
   padding: 10px;
 }
@@ -564,7 +569,7 @@
       <!-- DEMO CONTROLS -->
       <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
         <button id="btn-start-demo" disabled>Start</button>
-        <button id="btn-stop-demo" class="btn-secondary" disabled>Stop</button>
+        <button id="btn-stop-demo"  disabled>Stop</button>
         <button id="btn-toggle-debug" class="btn-secondary">Debug</button>
       </div>
 
