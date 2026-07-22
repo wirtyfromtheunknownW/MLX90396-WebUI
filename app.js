@@ -16,6 +16,13 @@ const btnStopDemo = document.getElementById('btn-stop-demo');
 const historyList = document.getElementById('history-list');
 const apiTestButtons = document.querySelectorAll('.api-btn'); 
 
+const queryQueue = [];
+let isProcessingQueue = false;
+let rxLineBuffer = '';
+
+// FORCE DEFAULT EOL TO LF (\n)
+selEol.value = '\\n';
+
 // --- State Variables ---
 let port = null, reader = null, writer = null;
 let isConnected = false, isReading = false, isDemoRunning = false;
@@ -156,41 +163,78 @@ function appendLog(text, cls) {
   scheduleLogFlush();
 }
 
-// --- TRUE SCPI RX PARSER (STRICT LINE BUFFER) ---
-let rxLineBuffer = '';
+// --- TRUE SCPI RX PARSER (BULLETPROOF REAL-TIME EVALUATION) ---
+let rxBuffer = '';
+let lastDataLine = '';
 
 function processRx(text) {
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (char === '\n' || char === '\r') {
-      if (rxLineBuffer.trim() !== '') {
-        handleDeviceLine(rxLineBuffer.trim());
-        rxLineBuffer = '';
+  rxLineBuffer += text;
+
+  while (true) {
+    const okIdx = rxLineBuffer.indexOf('(OK)>');
+    const errIdx = rxLineBuffer.search(/\(ERR\)>|\(E2BIG\)>|\(ERANGE\)>/);
+
+    // Case 1: Prompt found
+    if (okIdx !== -1 && (errIdx === -1 || okIdx < errIdx)) {
+      const fullMatch = rxLineBuffer.substring(0, okIdx + 5);
+      rxLineBuffer = rxLineBuffer.substring(okIdx + 5);
+      handleDeviceResponse(fullMatch, false);
+    } 
+    // Case 2: Error prompt found
+    else if (errIdx !== -1) {
+      const endIdx = rxLineBuffer.indexOf('>', errIdx);
+      if (endIdx !== -1) {
+        const fullMatch = rxLineBuffer.substring(0, endIdx + 1);
+        rxLineBuffer = rxLineBuffer.substring(endIdx + 1);
+        handleDeviceResponse(fullMatch, true);
+      } else {
+        break; // Wait for full error prompt
       }
-    } else {
-      rxLineBuffer += char;
+    } 
+    // Case 3: Line break without prompt (logs/debug)
+    else {
+      const nlIdx = rxLineBuffer.search(/[\r\n]/);
+      if (nlIdx !== -1) {
+        const line = rxLineBuffer.substring(0, nlIdx).trim();
+        if (line) appendLog(line + '\n', 'log-rx');
+        rxLineBuffer = rxLineBuffer.substring(nlIdx + 1);
+      } else {
+        break; // Need more bytes from Serial stream
+      }
     }
   }
 }
 
-function handleDeviceLine(line) {
-  let isSuccess = line.includes('(OK)>');
-  let isError = line.includes('(ERR)>') || line.includes('(E2BIG)>') || line.includes('(ERANGE)>');
-  
-  if (isSuccess) appendLog(line + '\n', 'log-okprompt');
-  else if (isError) appendLog(line + '\n', 'log-badprompt');
-  else appendLog(line + '\n', 'log-rx');
+function handleDeviceResponse(rawResponse, isError) {
+  const trimmed = rawResponse.trim();
+  if (!trimmed) return;
 
-  if (scpiWaiter) {
-    if (isSuccess) {
-      // Extract data safely after the (OK)> prompt
-      const dataPart = line.substring(line.indexOf('(OK)>') + 5).trim();
-      scpiWaiter.resolve(dataPart);
-      scpiWaiter = null;
-    } else if (isError) {
-      scpiWaiter.reject(new Error(line));
-      scpiWaiter = null;
+  appendLog(trimmed + '\n', isError ? 'log-badprompt' : 'log-okprompt');
+
+  if (queryQueue.length > 0 && isProcessingQueue) {
+    const current = queryQueue[0];
+    clearTimeout(current.timer);
+
+    if (isError) {
+      queryQueue.shift();
+      isProcessingQueue = false;
+      current.reject(new Error(trimmed));
+    } else {
+      // 1. Remove (OK)> prompt
+      let cleanData = trimmed.replace('(OK)>', '').trim();
+      
+      // 2. Strip echoed command prefix if MCU echoed it back
+      if (cleanData.startsWith(current.cmd)) {
+        cleanData = cleanData.substring(current.cmd.length).trim();
+      }
+
+      queryQueue.shift();
+      isProcessingQueue = false;
+      current.resolve(cleanData);
     }
+
+    // Immediately trigger the next query waiting in line
+    setTimeout(processQueryQueue, 0);
   }
 }
 
@@ -241,16 +285,41 @@ async function sendCommand(cmd, echo = true, recordHistory = true) {
 
 async function scpiQuery(cmd) {
   return new Promise((resolve, reject) => {
-    scpiWaiter = { resolve, reject };
-    sendCommand(cmd, true, false); 
-    
-    setTimeout(() => {
-      if (scpiWaiter) {
-        scpiWaiter.reject(new Error("Device Timeout on command: " + cmd));
-        scpiWaiter = null;
-      }
-    }, 1500);
+    queryQueue.push({ 
+      cmd: cmd.trim(), 
+      resolve, 
+      reject, 
+      timer: null 
+    });
+    processQueryQueue();
   });
+}
+
+async function processQueryQueue() {
+  if (isProcessingQueue || queryQueue.length === 0) return;
+
+  isProcessingQueue = true;
+  const current = queryQueue[0];
+
+  // Individual 1.5s timeout for the active command in queue
+  current.timer = setTimeout(() => {
+    if (queryQueue[0] === current) {
+      queryQueue.shift();
+      isProcessingQueue = false;
+      current.reject(new Error("Device Timeout on command: " + current.cmd));
+      processQueryQueue(); // Process next queued command
+    }
+  }, 1500);
+
+  try {
+    await sendCommand(current.cmd, true, false);
+  } catch (err) {
+    clearTimeout(current.timer);
+    queryQueue.shift();
+    isProcessingQueue = false;
+    current.reject(err);
+    processQueryQueue();
+  }
 }
 
 // --- Connection Logic ---
@@ -265,6 +334,18 @@ function setUIConnected(connected) {
   btnStartDemo.disabled = !connected;
   
   apiTestButtons.forEach(btn => btn.disabled = !connected);
+
+  // --- ADD THESE NVRAM LINES HERE ---
+  const nvramAddr = document.getElementById('nvram-addr');
+  if (nvramAddr) {
+    nvramAddr.disabled = !connected;
+    document.getElementById('nvram-val').disabled = !connected;
+    document.getElementById('btn-nvram-read').disabled = !connected;
+    document.getElementById('btn-nvram-write').disabled = !connected;
+    document.getElementById('btn-nvram-dump').disabled = !connected;
+    document.getElementById('btn-nvram-hs').disabled = !connected;
+    document.getElementById('btn-nvram-hr').disabled = !connected;
+  }
 }
 
 async function connectSerial() {
@@ -370,21 +451,20 @@ async function runJoystickDemo() {
       await new Promise(r => setTimeout(r, 200)); 
       appendLog('[SYSTEM] Hardware Ready. Starting Stream...\n', 'log-okprompt');
 
-      while (isDemoRunning) {
-        try {
-            await mlxDevice.sm(0x3E); 
-            await new Promise(r => setTimeout(r, 20)); 
-            
-            const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
-            
-            // Still passing it raw to map directly, avoiding CRC strict killswitch
-            updateJoystickUI(result.x0 / 20, result.y0 / 20); 
-            
-        } catch (loopErr) {
-            appendLog(`[LOOP WARN]: ${loopErr.message}\n`, 'log-badprompt');
-            await new Promise(r => setTimeout(r, 50)); 
-        }
-      }
+    while (isDemoRunning) {
+    try {
+        await mlxDevice.sm(0x3E); 
+        await new Promise(r => setTimeout(r, 10)); // Allow MCU SPI conversion
+        
+        const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
+        updateJoystickUI(result.x0 / 20, result.y0 / 20); 
+
+        await new Promise(r => setTimeout(r, 30)); // Frame rate delay (~25 FPS)
+    } catch (loopErr) {
+        appendLog(`[LOOP WARN]: ${loopErr.message}\n`, 'log-badprompt');
+        await new Promise(r => setTimeout(r, 50)); 
+    }
+}
     } catch (err) {
       appendLog(`[DEMO ERROR]: ${err.message}\n`, 'log-badprompt');
       isDemoRunning = false;
@@ -446,4 +526,378 @@ txInput.addEventListener('keydown', (e) => {
 
 document.querySelectorAll('.quick-cmd').forEach(btn => {
   btn.addEventListener('click', () => sendCommand(btn.dataset.cmd));
+});
+
+// --- NVRAM MEMORY CONTROLLER ---
+const nvramAddr = document.getElementById('nvram-addr');
+const nvramVal = document.getElementById('nvram-val');
+const btnNvramRead = document.getElementById('btn-nvram-read');
+const btnNvramWrite = document.getElementById('btn-nvram-write');
+const btnNvramDump = document.getElementById('btn-nvram-dump');
+const btnNvramHs = document.getElementById('btn-nvram-hs');
+const btnNvramHr = document.getElementById('btn-nvram-hr');
+const nvramTableBody = document.getElementById('nvram-table-body');
+const memStatusBadge = document.getElementById('mem-status-badge');
+
+const TOTAL_REGS = 64; // Registers 0x00 to 0x3F
+const registerState = new Array(TOTAL_REGS).fill(null);
+
+// Initialize Memory Table
+function initMemoryTable() {
+  nvramTableBody.innerHTML = '';
+  for (let i = 0; i < TOTAL_REGS; i++) {
+    const tr = document.createElement('tr');
+    tr.dataset.reg = i;
+    
+    const hexReg = '0x' + i.toString(16).padStart(2, '0').toUpperCase();
+    
+    tr.innerHTML = `
+      <td>${hexReg}</td>
+      <td>${i}</td>
+      <td class="cell-hex">--</td>
+      <td class="cell-dec">--</td>
+      <td class="cell-status">Unread</td>
+    `;
+
+    tr.addEventListener('click', () => {
+      document.querySelectorAll('.mem-table tr').forEach(r => r.classList.remove('selected-row'));
+      tr.classList.add('selected-row');
+      
+      nvramAddr.value = hexReg;
+      if (registerState[i] !== null) {
+        nvramVal.value = '0x' + registerState[i].toString(16).padStart(4, '0').toUpperCase();
+      }
+    });
+
+    nvramTableBody.appendChild(tr);
+  }
+}
+initMemoryTable();
+
+// Enable/Disable Memory UI components based on serial state
+// const originalSetUIConnected = setUIConnected;
+// setUIConnected = function(connected) {
+//   originalSetUIConnected(connected);
+//   nvramAddr.disabled = !connected;
+//   nvramVal.disabled = !connected;
+//   btnNvramRead.disabled = !connected;
+//   btnNvramWrite.disabled = !connected;
+//   btnNvramDump.disabled = !connected;
+//   btnNvramHs.disabled = !connected;
+//   btnNvramHr.disabled = !connected;
+// };
+
+// Helper: Parse Hex or Dec Input
+function parseInputNumber(val) {
+  if (!val) return NaN;
+  const str = val.trim();
+  return str.startsWith('0x') || str.startsWith('0X') ? parseInt(str, 16) : parseInt(str, 10);
+}
+
+// Update single row in table UI
+function updateTableRegisterUI(reg, val, statusText = 'OK') {
+  registerState[reg] = val;
+  const tr = nvramTableBody.querySelector(`tr[data-reg="${reg}"]`);
+  if (!tr) return;
+
+  const hexCell = tr.querySelector('.cell-hex');
+  const decCell = tr.querySelector('.cell-dec');
+  const statusCell = tr.querySelector('.cell-status');
+
+  const hexVal = '0x' + val.toString(16).padStart(4, '0').toUpperCase();
+  
+  hexCell.textContent = hexVal;
+  decCell.textContent = val;
+  statusCell.textContent = statusText;
+
+  hexCell.classList.add('val-updated');
+  setTimeout(() => hexCell.classList.remove('val-updated'), 1000);
+}
+
+// READ Register
+async function readMemoryRegister() {
+  const reg = parseInputNumber(nvramAddr.value);
+  if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
+    appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
+    return;
+  }
+
+  try {
+    memStatusBadge.textContent = `Reading ${reg}...`;
+    const res = await mlxDevice.rr(reg);
+    
+    if (!res.error) {
+      nvramVal.value = '0x' + res.data.toString(16).padStart(4, '0').toUpperCase();
+      updateTableRegisterUI(reg, res.data, 'Read OK');
+      appendLog(`[MEM READ] Reg 0x${reg.toString(16).toUpperCase()}: 0x${res.data.toString(16).toUpperCase()}\n`, 'log-okprompt');
+    } else {
+      appendLog(`[MEM ERROR] Read failed at Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-badprompt');
+    }
+  } catch (err) {
+    appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
+  } finally {
+    memStatusBadge.textContent = 'Ready';
+  }
+}
+
+// WRITE Register
+async function writeMemoryRegister() {
+  const reg = parseInputNumber(nvramAddr.value);
+  const val = parseInputNumber(nvramVal.value);
+
+  if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
+    appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
+    return;
+  }
+  if (isNaN(val) || val < 0 || val > 0xFFFF) {
+    appendLog('[MEM ERROR] Invalid 16-bit Value (0x0000 - 0xFFFF)\n', 'log-badprompt');
+    return;
+  }
+
+  try {
+    memStatusBadge.textContent = `Writing ${reg}...`;
+    const err = await mlxDevice.wr(reg, val);
+    
+    if (!err) {
+      updateTableRegisterUI(reg, val, 'Written');
+      appendLog(`[MEM WRITE] Written 0x${val.toString(16).toUpperCase()} to Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-okprompt');
+    } else {
+      appendLog(`[MEM ERROR] CRC or Write Error on Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-badprompt');
+    }
+  } catch (err) {
+    appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
+  } finally {
+    memStatusBadge.textContent = 'Ready';
+  }
+}
+
+// Dump All Registers
+async function dumpAllMemory() {
+  btnNvramDump.disabled = true;
+  appendLog('[MEM DUMP] Starting full register scan...\n', 'log-okprompt');
+  
+  for (let i = 0; i < TOTAL_REGS; i++) {
+    try {
+      memStatusBadge.textContent = `Dumping ${i}/${TOTAL_REGS}`;
+      const res = await mlxDevice.rr(i);
+      if (!res.error) {
+        updateTableRegisterUI(i, res.data, 'Dumped');
+      }
+      await new Promise(r => setTimeout(r, 10)); // Prevent serial queue flooding
+    } catch (err) {
+      appendLog(`[MEM DUMP WARN] Error at reg ${i}: ${err.message}\n`, 'log-badprompt');
+    }
+  }
+  
+  memStatusBadge.textContent = 'Ready';
+  btnNvramDump.disabled = false;
+  appendLog('[MEM DUMP] Register scan completed.\n', 'log-okprompt');
+}
+
+// Event Listeners
+btnNvramRead.addEventListener('click', readMemoryRegister);
+btnNvramWrite.addEventListener('click', writeMemoryRegister);
+btnNvramDump.addEventListener('click', dumpAllMemory);
+btnNvramHs.addEventListener('click', async () => {
+  await mlxDevice.hs();
+  appendLog('[MEM] Memory Store command (HS) executed.\n', 'log-okprompt');
+});
+btnNvramHr.addEventListener('click', async () => {
+  await mlxDevice.hr();
+  appendLog('[MEM] Memory Recall command (HR) executed.\n', 'log-okprompt');
+});
+
+// --- JOYSTICK CALIBRATION MODULE ---
+const calibState = {
+  offsetX: 0,
+  offsetY: 0,
+  minX: Infinity,
+  maxX: -Infinity,
+  minY: Infinity,
+  maxY: -Infinity,
+  deadbandPct: 3,
+  isSweeping: false,
+  isCalibrated: false
+};
+
+const sweepPoints = [];
+
+// UI Elements
+const btnCalibZero = document.getElementById('btn-calib-zero');
+const btnCalibSweep = document.getElementById('btn-calib-sweep');
+const btnCalibSave = document.getElementById('btn-calib-save');
+const inputDeadband = document.getElementById('input-deadband');
+const valDeadband = document.getElementById('val-deadband');
+const calibCanvas = document.getElementById('calib-canvas');
+const ctxCalib = calibCanvas ? calibCanvas.getContext('2d') : null;
+
+// Enable buttons when device connects
+const calibSetUIConnected = setUIConnected;
+setUIConnected = function(connected) {
+  calibSetUIConnected(connected);
+  if (btnCalibZero) btnCalibZero.disabled = !connected;
+  if (btnCalibSweep) btnCalibSweep.disabled = !connected;
+  if (btnCalibSave) btnCalibSave.disabled = !connected;
+};
+
+// Canvas Radar Grid Drawing
+function drawRadarGrid() {
+  if (!ctxCalib) return;
+  const w = calibCanvas.width;
+  const h = calibCanvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+
+  ctxCalib.clearRect(0, 0, w, h);
+
+  // Target Rings
+  ctxCalib.strokeStyle = '#1F3A62';
+  ctxCalib.lineWidth = 1;
+  [35, 70, 110].forEach(r => {
+    ctxCalib.beginPath();
+    ctxCalib.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctxCalib.stroke();
+  });
+
+  // Crosshairs
+  ctxCalib.beginPath();
+  ctxCalib.moveTo(cx, 10); ctxCalib.lineTo(cx, h - 10);
+  ctxCalib.moveTo(10, cy); ctxCalib.lineTo(w - 10, cy);
+  ctxCalib.stroke();
+
+  // Draw Captured Trace Points
+  if (sweepPoints.length > 1) {
+    ctxCalib.strokeStyle = '#59FFB0';
+    ctxCalib.lineWidth = 2;
+    ctxCalib.beginPath();
+
+    for (let i = 0; i < sweepPoints.length; i++) {
+      const pt = sweepPoints[i];
+      // Scale raw values to canvas pixels (~30 LSB/px)
+      const px = cx + ((pt.x - calibState.offsetX) / 25);
+      const py = cy - ((pt.y - calibState.offsetY) / 25);
+
+      if (i === 0) ctxCalib.moveTo(px, py);
+      else ctxCalib.lineTo(px, py);
+    }
+    ctxCalib.stroke();
+  }
+}
+drawRadarGrid();
+
+// Step 1: Capture Zero Center
+btnCalibZero?.addEventListener('click', async () => {
+  try {
+    const res = await mlxDevice.rm_joystick_xyz(false, 0x3E);
+    if (!res.error) {
+      calibState.offsetX = res.x0;
+      calibState.offsetY = res.y0;
+
+      document.getElementById('telem-off-x').textContent = calibState.offsetX;
+      document.getElementById('telem-off-y').textContent = calibState.offsetY;
+      
+      // Update step wizard UI
+      document.getElementById('step-1').classList.remove('active');
+      document.getElementById('step-2').classList.add('active');
+      appendLog(`[CALIB] Zero Center Captured: X=${calibState.offsetX}, Y=${calibState.offsetY}\n`, 'log-okprompt');
+    }
+  } catch (err) {
+    appendLog(`[CALIB ERROR] Zero Capture Failed: ${err.message}\n`, 'log-badprompt');
+  }
+});
+
+// Step 2: Toggle Range Sweep Mode
+btnCalibSweep?.addEventListener('click', () => {
+  calibState.isSweeping = !calibState.isSweeping;
+
+  if (calibState.isSweeping) {
+    btnCalibSweep.textContent = 'Stop & Process Sweep';
+    btnCalibSweep.classList.add('btn-danger');
+    sweepPoints.length = 0;
+    appendLog('[CALIB] Rotate joystick 360° to record boundaries...\n', 'log-okprompt');
+  } else {
+    btnCalibSweep.textContent = 'Start Sweep Recording';
+    btnCalibSweep.classList.remove('btn-danger');
+    
+    document.getElementById('step-2').classList.remove('active');
+    document.getElementById('step-3').classList.add('active');
+
+    const spanX = calibState.maxX - calibState.minX;
+    const spanY = calibState.maxY - calibState.minY;
+    document.getElementById('telem-span').textContent = `${spanX} x ${spanY}`;
+    appendLog(`[CALIB] Sweep finished. Span X: ${spanX}, Span Y: ${spanY}\n`, 'log-okprompt');
+  }
+});
+
+// Step 3: Deadband Slider Adjust
+inputDeadband?.addEventListener('input', (e) => {
+  calibState.deadbandPct = parseInt(e.target.value, 10);
+  if (valDeadband) valDeadband.textContent = `${calibState.deadbandPct}%`;
+});
+
+// Step 4: Apply Calibration
+btnCalibSave?.addEventListener('click', () => {
+  calibState.isCalibrated = true;
+  document.getElementById('telem-status').textContent = 'Active (Calibrated)';
+  document.getElementById('telem-status').style.color = '#59FFB0';
+  
+  document.getElementById('step-3').classList.remove('active');
+  document.getElementById('step-4').classList.add('active');
+  
+  appendLog('[CALIB] Calibration profile applied successfully.\n', 'log-okprompt');
+});
+
+// Clear Plot Button
+document.getElementById('btn-clear-plot')?.addEventListener('click', () => {
+  sweepPoints.length = 0;
+  drawRadarGrid();
+});
+
+// Helper function to process raw values through active calibration settings
+export function processCalibratedCoordinates(rawX, rawY) {
+  // 1. Subtract Zero Center
+  let x = rawX - calibState.offsetX;
+  let y = rawY - calibState.offsetY;
+
+  // 2. Capture Min/Max during active sweep mode
+  if (calibState.isSweeping) {
+    if (x < calibState.minX) calibState.minX = x;
+    if (x > calibState.maxX) calibState.maxX = x;
+    if (y < calibState.minY) calibState.minY = y;
+    if (y > calibState.maxY) calibState.maxY = y;
+
+    sweepPoints.push({ x: rawX, y: rawY });
+    if (sweepPoints.length % 3 === 0) drawRadarGrid(); // Redraw canvas periodically
+  }
+
+  // 3. Apply Deadband Filter
+  if (calibState.isCalibrated) {
+    const radius = Math.sqrt(x * x + y * y);
+    const maxSpan = Math.max(calibState.maxX || 1000, 1000);
+    const deadbandCutoff = (maxSpan * calibState.deadbandPct) / 100;
+
+    if (radius < deadbandCutoff) {
+      x = 0;
+      y = 0;
+    }
+  }
+
+  return { x, y };
+}
+
+// --- Debug Terminal Toggle ---
+const btnToggleDebug = document.getElementById('btn-toggle-debug');
+
+btnToggleDebug.addEventListener('click', () => {
+  if (!miniLogWindow) return;
+  
+  // Toggle visibility class on the mini terminal window
+  const isHidden = miniLogWindow.classList.toggle('hidden');
+  
+  // Highlight the Debug button when active
+  if (isHidden) {
+    btnToggleDebug.classList.add('btn-secondary');
+  } else {
+    btnToggleDebug.classList.remove('btn-secondary');
+  }
 });

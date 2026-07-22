@@ -8,7 +8,7 @@
     :root {
       color-scheme: light;
       font-family: Inter, system-ui, -apple-system, sans-serif;
-      background: #1A2027; /* Dark background matching your snippet */
+      background: #00354B; /* Dark background matching your snippet */
       color: #E9F2FF;
     }
     * { box-sizing: border-box; }
@@ -16,7 +16,7 @@
       margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px;
     }
     .app-shell {
-      width: min(800px, 100%); background: #232A34; border-radius: 24px;
+      width: min(800px, 100%); background: #00354B; border-radius: 24px;
       padding: 32px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
       border: 1px solid #2D3742;
     }
@@ -29,12 +29,12 @@
     .header-row h1 { margin: 0; font-size: 1.5rem; }
     
     button {
-      border: none; border-radius: 8px; cursor: pointer; background: #00ADEF; color: white;
+      border: none; border-radius: 2px; cursor: pointer; background: #65BBA9; color: white;
       font-size: 0.95rem; padding: 10px 20px; transition: 0.2s; font-weight: 600;
     }
-    button:hover { background: #008ec1; }
+    button:hover { background: #65BBA9; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn-danger { background: #dc2626; } .btn-danger:hover { background: #b91c1c; }
+    .btn-danger { background: #DB4140; } .btn-danger:hover { background: #DB4140; }
     .btn-secondary { background: #2F3F58; } .btn-secondary:hover { background: #28384F; }
 
     /* Tabs */
@@ -109,16 +109,147 @@
       filter: blur(5px); opacity: 0.4;
     }
 
+  /* --- NVRAM MEMORY VIEW STYLES --- */
+  .mem-control-card {
+    background: #00354B;
+    border: 1px solid #b2c4cb;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .mem-input-group {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .mem-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 140px;
+  }
+
+  .mem-field label {
+    font-size: 0.8rem;
+    color: #A9B8C9;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .mem-field input {
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #1F3A62;
+    background: #132943;
+    color: #E9F2FF;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.95rem;
+  }
+
+  .mem-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mem-tools {
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid #2D3742;
+    padding-top: 14px;
+  }
+
+  .mem-table-wrapper {
+    background: #00354B;
+    border: 1px solid #b2c4cb;
+    border-radius: 16px;
+    padding: 20px;
+  }
+
+  .mem-table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .mem-table-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #E9F2FF;
+  }
+
+  .mem-badge {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: #132943;
+    color: #65BBA9;
+    border: 1px solid #1F3A62;
+    font-weight: 600;
+  }
+
+  .table-scroll-container {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid #2D3742;
+    border-radius: 8px;
+  }
+
+  .mem-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.85rem;
+    text-align: left;
+  }
+
+  .mem-table th {
+    background: #132943;
+    color: #A9B8C9;
+    padding: 10px 14px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border-bottom: 1px solid #2D3742;
+  }
+
+  .mem-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid #27313D;
+    color: #D9E2F2;
+  }
+
+  .mem-table tr:hover {
+    background: #253142;
+    cursor: pointer;
+  }
+
+  .mem-table tr.selected-row {
+    background: #1F3A62;
+  }
+
+  .mem-table td.val-updated {
+    color: #59ffb0;
+    font-weight: bold;
+  }
+
     /* LEDs */
     .joystick__led {
-      position: absolute; top: -40px; left: 50%; width: 3px; height: 3px;
+      position: absolute; top: -40px; left: 50%; width: 4px; height: 4px;
       border-radius: 50%; background: rgba(0, 0, 0, 0.7);
       transform-origin: 0 140px; transition: background 150ms ease, box-shadow 150ms ease;
     }
     /* Dynamic LED Classes controlled by JS */
-    .led-active { background: #fff; box-shadow: 0 0 5px #fff; }
-    .led-low-1 { background: rgba(255,255,255,0.5); box-shadow: 0 0 5px rgba(255,255,255,0.5); }
-    .led-low-2 { background: rgba(255,255,255,0.1); box-shadow: 0 0 5px rgba(255,255,255,0.1); }
+    .led-active { background: #EEA320; box-shadow: 0 0 5px #EEA320; }
+    .led-low-1 { background: #F2B630; box-shadow: 0 0 5px #F2B630; }
+    .led-low-2 { background: #FCDA4F; box-shadow: 0 0 5px #FCDA4F; }
 
     /* Terminal Layout */
     .terminal-wrapper { display: flex; gap: 16px; align-items: stretch; }
@@ -141,20 +272,284 @@
     .sidebar h3 { margin: 0; font-size: 0.9rem; color: #E9F2FF; text-transform: uppercase; }
     .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
     .hist-item { background: #232A34; padding: 6px; border-radius: 6px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
+
+    /* --- CALIBRATION VIEW STYLES --- */
+.calib-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+}
+
+.calib-card {
+  background: #00354B;
+  border: 1px solid #b2c4cb;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.calib-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calib-wizard h3 { margin: 0 0 4px 0; font-size: 1rem; color: #E9F2FF; }
+
+.calib-step {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #132943;
+  border: 1px solid #b2c4cb;
+  opacity: 0.5;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+
+.calib-step.active {
+  opacity: 1;
+  border-color: #b2c4cb;
+}
+
+.step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #65BBA9;
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.step-details h4 { margin: 0; font-size: 0.85rem; color: #E9F2FF; }
+.step-details p { margin: 0; font-size: 0.75rem; color: #A9B8C9; }
+
+.calib-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.plot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.plot-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.plot-header h3 { margin: 0; font-size: 0.95rem; color: #E9F2FF; }
+
+.canvas-wrapper {
+  background: #132943;
+  border-radius: 12px;
+  border: 1px solid #1F3A62;
+  padding: 10px;
+}
+
+.telemetry-card {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  text-align: center;
+}
+
+.telem-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telem-label { font-size: 0.7rem; color: #A9B8C9; text-transform: uppercase; }
+.telem-val { font-family: ui-monospace, Consolas, monospace; font-size: 1rem; color: #65BBA9; font-weight: bold; }
+
+.hidden {
+  display: none !important;
+}
+
+#input-deadband {
+  accent-color: #EEA320; /* Or #00ADEF for cyan */
+  cursor: pointer;
+}
+
   </style>
 </head>
 <body>
   <main class="app-shell">
     
+
     <div class="header-row">
-      <h1>MLX90396 Dashboard</h1>
+      <h1>MLX90396 Web GUI</h1>
       <button id="btn-connect">Connect USB</button>
     </div>
 
     <div class="tab-bar">
       <button class="tab-btn active" data-target="view-joystick">Joystick Demo</button>
       <button class="tab-btn" data-target="view-terminal">SCPI Terminal</button>
+      <button class="tab-btn" data-target="view-calib">Calibration</button>
+      <button class="tab-btn" data-target="view-memory">NVRAM Memory</button>
+      
     </div>
+
+<!-- VIEW 4: JOYSTICK CALIBRATION -->
+<div id="view-calib" class="view">
+  <div class="calib-layout">
+    
+    <!-- LEFT PANEL: STEP-BY-STEP WIZARD -->
+    <div class="calib-card calib-wizard">
+      <h3>Calibration Wizard</h3>
+      
+      <!-- Step 1 -->
+      <div class="calib-step active" id="step-1">
+        <div class="step-num">1</div>
+        <div class="step-details">
+          <h4>Set Rest Center</h4>
+          <p>Leave joystick untouched at center rest.</p>
+          <button id="btn-calib-zero" class="btn-secondary" disabled>Capture Zero</button>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="calib-step" id="step-2">
+        <div class="step-num">2</div>
+        <div class="step-details">
+          <h4>Full Boundary Sweep</h4>
+          <p>Rotate stick 360° along outer edge.</p>
+          <button id="btn-calib-sweep" class="btn-secondary" disabled>Start Sweep Recording</button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="calib-step" id="step-3">
+        <div class="step-num">3</div>
+        <div class="step-details">
+          <h4>Center Deadband</h4>
+          <label for="input-deadband" style="font-size: 0.8rem; color: #A9B8C9;">Filter: <b id="val-deadband" style="color: #EEA320;">3%</b></label>
+          <input type="range" id="input-deadband" min="0" max="15" value="3" style="width: 100%; margin-top: 4px;" />
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="calib-step" id="step-4">
+        <div class="step-num">4</div>
+        <div class="step-details">
+          <h4>Apply Calibration</h4>
+          <p>Save computed parameters.</p>
+          <button id="btn-calib-save" class="btn-secondary" disabled>Apply Calibration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: MOTION RADAR & TELEMETRY -->
+    <div class="calib-main">
+      
+      <!-- Motion Radar Canvas -->
+      <div class="calib-card plot-card">
+        <div class="plot-header">
+          <h3>Magnetic Motion Trace (Bx vs By)</h3>
+          <button id="btn-clear-plot" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;">Clear Plot</button>
+        </div>
+        
+        <div class="canvas-wrapper">
+          <canvas id="calib-canvas" width="300" height="300"></canvas>
+        </div>
+      </div>
+
+      <!-- Live Telemetry Bar -->
+      <div class="calib-card telemetry-card">
+        <div class="telem-item">
+          <span class="telem-label">Offset X</span>
+          <span class="telem-val" id="telem-off-x">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Offset Y</span>
+          <span class="telem-val" id="telem-off-y">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Min/Max Span</span>
+          <span class="telem-val" id="telem-span">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Calib Status</span>
+          <span class="telem-val" id="telem-status" style="color: #EEA320;">Uncalibrated</span>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+    <!-- VIEW 3: NVRAM MEMORY SETTINGS -->
+<div id="view-memory" class="view">
+  
+  <!-- Memory Action Panel -->
+  <div class="mem-control-card">
+    <div class="mem-input-group">
+      <div class="mem-field">
+        <label for="nvram-addr">Address (Register)</label>
+        <input type="text" id="nvram-addr" placeholder="0x00 or 0" disabled />
+      </div>
+      <div class="mem-field">
+        <label for="nvram-val">Value (16-bit Word)</label>
+        <input type="text" id="nvram-val" placeholder="0x0000 or 0" disabled />
+      </div>
+      <div class="mem-actions">
+        <button id="btn-nvram-read" class="btn-secondary" disabled>Read</button>
+        <button id="btn-nvram-write" disabled>Write</button>
+      </div>
+    </div>
+
+    <!-- Quick Store/Recall Utilities -->
+    <div class="mem-tools">
+      <button id="btn-nvram-dump" class="btn-secondary" disabled>Dump All Regs</button>
+      <button id="btn-nvram-hs" class="btn-secondary" disabled title="Store RAM to EEPROM/NVRAM">Store (HS)</button>
+      <button id="btn-nvram-hr" class="btn-secondary" disabled title="Recall EEPROM/NVRAM to RAM">Recall (HR)</button>
+    </div>
+  </div>
+
+  <!-- Memory Visualization Table -->
+  <div class="mem-table-wrapper">
+    <div class="mem-table-header">
+      <h3>Register Map (0x00 - 0x3F)</h3>
+      <span id="mem-status-badge" class="mem-badge">Ready</span>
+    </div>
+    <div class="table-scroll-container">
+      <table class="mem-table">
+        <thead>
+          <tr>
+            <th>Reg (Hex)</th>
+            <th>Reg (Dec)</th>
+            <th>Value (Hex)</th>
+            <th>Value (Dec)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="nvram-table-body">
+          <!-- Rows dynamically generated by app.js -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
 
     <!-- VIEW 1: 3D JOYSTICK -->
     <div id="view-joystick" class="view active">
@@ -168,8 +563,9 @@
       
       <!-- DEMO CONTROLS -->
       <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
-        <button id="btn-start-demo" disabled>Start Demo Loop</button>
-        <button id="btn-stop-demo" class="btn-secondary" disabled>Stop Demo</button>
+        <button id="btn-start-demo" disabled>Start</button>
+        <button id="btn-stop-demo" class="btn-secondary" disabled>Stop</button>
+        <button id="btn-toggle-debug" class="btn-secondary">Debug</button>
       </div>
 
       <!-- NEW: MINI TERMINAL -->
@@ -177,18 +573,18 @@
 
       <!-- NEW: API TEST BUTTONS -->
       <div style="margin-top: 20px; text-align: center;">
-        <h4 style="color: #A9B8C9; margin-bottom: 12px; font-size: 0.9rem; text-transform: uppercase;">Test Individual API Commands</h4>
+        <h4 style="color: #A9B8C9; margin-bottom: 12px; font-size: 0.9rem; text-transform: uppercase;">Device Commands</h4>
         <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 600px; margin: 0 auto;">
-          <button class="api-btn btn-secondary" data-api="rt" disabled>RT</button>
-          <button class="api-btn btn-secondary" data-api="hs" disabled>HS</button>
-          <button class="api-btn btn-secondary" data-api="hr" disabled>HR</button>
-          <button class="api-btn btn-secondary" data-api="ex" disabled>EX (Idle)</button>
-          <button class="api-btn btn-secondary" data-api="rr" disabled>RR (Reg 0)</button>
-          <button class="api-btn btn-secondary" data-api="wr" disabled>WR (Reg 0)</button>
-          <button class="api-btn btn-secondary" data-api="sb" disabled>SB</button>
-          <button class="api-btn btn-secondary" data-api="swoc" disabled>SWOC</button>
-          <button class="api-btn btn-secondary" data-api="sm" disabled>SM</button>
-          <button class="api-btn btn-secondary" data-api="rm_xyz" disabled>RM (XYZ)</button>
+          <button class="api-btn btn-secondary" data-api="rt" disabled>Reset</button>
+          <button class="api-btn btn-secondary" data-api="hs" disabled>Memory Store</button>
+          <button class="api-btn btn-secondary" data-api="hr" disabled>Memory Recall</button>
+          <button class="api-btn btn-secondary" data-api="ex" disabled>Idle mode</button>
+          <button class="api-btn btn-secondary" data-api="rr" disabled>Read Register</button>
+          <button class="api-btn btn-secondary" data-api="wr" disabled>Write Register</button>
+          <button class="api-btn btn-secondary" data-api="sb" disabled>Burst mode</button>
+          <button class="api-btn btn-secondary" data-api="swoc" disabled>WOC mode</button>
+          <button class="api-btn btn-secondary" data-api="sm" disabled>Single measurement</button>
+          <button class="api-btn btn-secondary" data-api="rm_xyz" disabled>Read memory</button>
           <button class="api-btn btn-secondary" data-api="rm_sfi" disabled>RM (SFI)</button>
         </div>
       </div>

@@ -61,14 +61,14 @@ export class MLX90396_API {
       
       // 1. Assert CS0 and wait 5ms for hardware to catch up
       await this.query(":SPI:CS0 0");
-      await new Promise(r => setTimeout(r, 5));
+    //   await new Promise(r => setTimeout(r, 5));
 
       // 2. Send Data
       const scpiCmd = `:SPI:WriteReaD ${decStr}`;
       const response = await this.query(scpiCmd);
       
       // 3. De-assert CS0 and wait 5ms
-      await new Promise(r => setTimeout(r, 5));
+    //   await new Promise(r => setTimeout(r, 5));
       await this.query(":SPI:CS0 1");
       
       // Failsafe if response is empty
