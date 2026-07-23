@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MLX90396 Web UI</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background-image: url('background.jpg'); 
+      background-size: cover;        /* Scales image to fill the screen */
+      background-position: center;   /* Keeps image centered */
+      background-repeat: no-repeat;  /* Prevents image tiling */
+      background-attachment: fixed;  /* Keeps background still while scrolling */
+      background-color: #00354B;     /* Fallback color while image loads */
+      color: #E9F2FF;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px;
+    }
+    .app-shell {
+      width: min(800px, 100%); background: #00354B; border-radius: 1px;
+      padding: 32px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+      border: 1px solid #2D3742;
+    }
+    
+    /* Global Controls */
+    .header-row {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
+      border-bottom: 1px solid #2D3742; padding-bottom: 16px;
+    }
+    .header-row h1 { margin: 0; font-size: 1.5rem; }
+    
+    button {
+      border: none; border-radius: 1px; cursor: pointer; background: #65BBA9; color: white;
+      font-size: 0.95rem; padding: 10px 20px; transition: 0.2s; font-weight: 600;
+    }
+    button:hover { background: #65BBA9; opacity: 0.6; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-danger { background: #DB4140; } .btn-danger:hover { background: #DB4140;  }
+    .btn-secondary { background: #8fc1cc; } .btn-secondary:hover { background: #8fc1cc; opacity: 0.6; }
+
+    /* Tabs */
+    .tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+    .tab-btn {
+      background: transparent; color: #A9B8C9; border: 2px solid transparent; 
+      border-radius: 1px; padding: 8px 16px; font-weight: 600; cursor: pointer;
+    }
+    .tab-btn.active { background: #132943; color: #E9F2FF; border-color: #1F3A62; }
+    .tab-btn:hover:not(.active) { background: #1a273b; }
+    
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* --- COMPILED SCSS 3D JOYSTICK --- */
+    .joystick-wrapper {
+      display: flex; justify-content: center; align-items: center; 
+      padding: 60px; min-height: 400px; position: relative;
+    }
+    .joystick {
+      background: radial-gradient(at 75% 75%, #f2f2f2 0%, #d9d9d9 100%);
+      box-shadow: 0 -5px 5px rgba(255, 255, 255, 0.1), 0 5px 5px rgba(255, 255, 255, 0.05), 
+                  inset 0 5px 5px rgba(0, 0, 0, 0.02), inset 0 -5px 5px rgba(255, 255, 255, 0.05);
+      position: relative;
+      height: 200px;
+      width: 200px;
+      border-radius: 50%;
+    }
+    .joystick__ball {
+      background: radial-gradient(at 25% 25%, #f2f2f2 0%, #d9d9d9 100%);
+      position: absolute; height: 70%; width: 70%; border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+      transform-style: preserve-3d; perspective: 1000px;
+      box-shadow: inset -5px -10px 40px rgba(0, 0, 0, 0.05), inset 0px 0px 10px rgba(0, 0, 0, 0.3), 
+                  inset 0px 0px 5px rgba(0, 0, 0, 0.5), inset 0px 0px 3px 1px rgba(0, 0, 0, 0.51), 
+                  0px 0px 10px rgba(0, 0, 0, 0.3);
+    }
+    .joystick__zero {
+      position: absolute; z-index: 4; height: 30%; width: 30%; border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+    }
+    
+    /* Dynamic Stick powered by JS variables */
+    .joystick__stick {
+      background: radial-gradient(at 50% 75%, #f2f2f2 0%, #d9d9d9 100%);
+      position: absolute; z-index: 2; height: 50%; width: 50%; border-radius: 50%;
+      top: 50%; left: 50%; margin: -25% -25%;
+      transition: transform 100ms ease, box-shadow 100ms ease;
+      
+      transform: translate(calc(var(--tx, 0) * 1%), calc(var(--ty, 0) * 1%)) 
+                 rotateX(calc(var(--ty, 0) * 0.5deg)) 
+                 rotateY(calc(var(--tx, 0) * -0.5deg));
+                 
+      box-shadow: inset calc(var(--tx, 0) * 0.25px) calc(var(--ty, 0) * 0.25px) 10px rgba(255, 255, 255, 0.3),
+                  inset calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 10px rgba(0, 0, 0, 0.15),
+                  0 2px 10px -5px rgba(0, 0, 0, 0.7),
+                  0 4px 20px -10px rgba(0, 0, 0, 0.2),
+                  calc(var(--ty, 0) * 0.5px) 0 40px -20px rgba(0, 0, 0, 0.2),
+                  calc(var(--ty, 0) * -0.5px) 50px 40px -20px rgba(0, 0, 0, 0.2);
+    }
+    .joystick__stick:before {
+      content: ''; background: #fff; position: absolute; top: 10px; left: 49px;
+      width: 3px; height: 3px; border-radius: 50%;
+      box-shadow: 0 2px 3px #000, 39px 40px #fff, 39px 42px 3px #000, 0px 80px #fff, 
+                  0px 82px 3px #000, -39px 40px #fff, -39px 42px 3px #000;
+      opacity: 0.15;
+    }
+    .joystick__stick:after {
+      content: ''; position: absolute; top: 50%; left: 50%; width: 50%; height: 50%;
+      margin: -25% -25%; border-radius: 50%;
+      box-shadow: calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 20px -10px rgba(0,0,0,0.8);
+      filter: blur(5px); opacity: 0.4;
+    }
+
+  /* --- NVRAM MEMORY VIEW STYLES --- */
+  .mem-control-card {
+    background: #00354B;
+    border: 1px solid #b2c4cb;
+    border-radius: 1px;
+    padding: 20px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .mem-input-group {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .mem-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 140px;
+  }
+
+  .mem-field label {
+    font-size: 0.8rem;
+    color: #A9B8C9;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .mem-field input {
+    padding: 10px;
+    border-radius: 1px;
+    border: 1px solid #1F3A62;
+    background: #132943;
+    color: #E9F2FF;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.95rem;
+  }
+
+  .mem-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mem-tools {
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid #2D3742;
+    padding-top: 14px;
+  }
+
+  .mem-table-wrapper {
+    background: #00354B;
+    border: 1px solid #b2c4cb;
+    border-radius: 1px;
+    padding: 20px;
+  }
+
+  .mem-table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .mem-table-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #E9F2FF;
+  }
+
+  .mem-badge {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 1px;
+    background: #132943;
+    color: #65BBA9;
+    border: 1px solid #1F3A62;
+    font-weight: 600;
+  }
+
+  .table-scroll-container {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid #2D3742;
+    border-radius: 1px;
+  }
+
+  .mem-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.85rem;
+    text-align: left;
+  }
+
+  .mem-table th {
+    background: #132943;
+    color: #A9B8C9;
+    padding: 10px 14px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border-bottom: 1px solid #2D3742;
+  }
+
+  .mem-table td {
+    padding: 8px 14px;
+    border-bottom: 1px solid #27313D;
+    color: #D9E2F2;
+  }
+
+  .mem-table tr:hover {
+    background: #253142;
+    cursor: pointer;
+  }
+
+  .mem-table tr.selected-row {
+    background: #1F3A62;
+  }
+
+  .mem-table td.val-updated {
+    color: #59ffb0;
+    font-weight: bold;
+  }
+
+    /* LEDs */
+    .joystick__led {
+      position: absolute; top: -40px; left: 50%; width: 4px; height: 4px;
+      border-radius: 50%; background: rgba(0, 0, 0, 0.7);
+      transform-origin: 0 140px; transition: background 150ms ease, box-shadow 150ms ease;
+    }
+    /* Dynamic LED Classes controlled by JS */
+    .led-active { background: #EEA320; box-shadow: 0 0 5px #EEA320; }
+    .led-low-1 { background: #F2B630; box-shadow: 0 0 5px #F2B630; }
+    .led-low-2 { background: #FCDA4F; box-shadow: 0 0 5px #FCDA4F; }
+
+    /* Terminal Layout */
+    .terminal-wrapper { display: flex; gap: 16px; align-items: stretch; }
+    .main-terminal { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+    .log-window {
+      height: 350px; background: #000; border-radius: 1px; padding: 12px;
+      font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
+      overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap;
+      border: 1px solid #2D3742; color: #D9E2F2;
+    }
+    .log-echo { color: #4db2ff; } .log-rx { color: #d9dedc; } 
+    .log-okprompt { color: #59ffb0; } .log-badprompt { color: #ff7a7a; }
+    .input-row { display: flex; gap: 8px; }
+    .input-row input { 
+      flex: 1; padding: 10px; border-radius: 1px; border: 1px solid #1F3A62; 
+      background: #132943; color: #E9F2FF;
+    }
+    .settings-row { display: flex; gap: 16px; font-size: 0.85rem; color: #A9B8C9; }
+    .sidebar { width: 180px; display: flex; flex-direction: column; gap: 8px; }
+    .sidebar h3 { margin: 0; font-size: 0.9rem; color: #E9F2FF; text-transform: uppercase; }
+    .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
+    .hist-item { background: #232A34; padding: 6px; border-radius: 1px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
+
+    /* --- CALIBRATION VIEW STYLES --- */
+.calib-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+}
+
+.calib-card {
+  background: #00354B;
+  border: 1px solid #b2c4cb;
+  border-radius: 1px;
+  padding: 20px;
+}
+
+.calib-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calib-wizard h3 { margin: 0 0 4px 0; font-size: 1rem; color: #E9F2FF; }
+
+.calib-step {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 1px;
+  background: #132943;
+  border: 1px solid #b2c4cb;
+  opacity: 0.5;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+
+.calib-step.active {
+  opacity: 1;
+  border-color: #b2c4cb;
+}
+
+.step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #65BBA9;
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.step-details h4 { margin: 0; font-size: 0.85rem; color: #E9F2FF; }
+.step-details p { margin: 0; font-size: 0.75rem; color: #A9B8C9; }
+
+.calib-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.plot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.plot-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.plot-header h3 { margin: 0; font-size: 0.95rem; color: #E9F2FF; }
+
+.canvas-wrapper {
+  background: #132943;
+  border-radius: 1px;
+  border: 1px solid #1F3A62;
+  padding: 10px;
+}
+
+.telemetry-card {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  text-align: center;
+}
+
+.telem-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.telem-label { font-size: 0.7rem; color: #A9B8C9; text-transform: uppercase; }
+.telem-val { font-family: ui-monospace, Consolas, monospace; font-size: 1rem; color: #65BBA9; font-weight: bold; }
+
+.hidden {
+  display: none !important;
+}
+
+#input-deadband {
+  accent-color: #EEA320; /* Or #00ADEF for cyan */
+  cursor: pointer;
+}
+
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    
+
+    <div class="header-row">
+      <h1>MLX90396 Web GUI</h1>
+      <button id="btn-connect">Connect USB</button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-target="view-joystick">Joystick Demo</button>
+      <button class="tab-btn" data-target="view-terminal">SCPI Terminal</button>
+      <button class="tab-btn" data-target="view-calib">Calibration</button>
+      <button class="tab-btn" data-target="view-memory">NVRAM Memory</button>
+      
+    </div>
+
+<!-- VIEW 4: JOYSTICK CALIBRATION -->
+<div id="view-calib" class="view">
+  <div class="calib-layout">
+    
+    <!-- LEFT PANEL: STEP-BY-STEP WIZARD -->
+    <div class="calib-card calib-wizard">
+      <h3>Calibration Wizard</h3>
+      
+      <!-- Step 1 -->
+      <div class="calib-step active" id="step-1">
+        <div class="step-num">1</div>
+        <div class="step-details">
+          <h4>Set Rest Center</h4>
+          <p>Leave joystick untouched at center rest.</p>
+          <button id="btn-calib-zero" class="btn-secondary" disabled>Capture Zero</button>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="calib-step" id="step-2">
+        <div class="step-num">2</div>
+        <div class="step-details">
+          <h4>Full Boundary Sweep</h4>
+          <p>Rotate stick 360° along outer edge.</p>
+          <button id="btn-calib-sweep" class="btn-secondary" disabled>Start Sweep Recording</button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="calib-step" id="step-3">
+        <div class="step-num">3</div>
+        <div class="step-details">
+          <h4>Center Deadband</h4>
+          <label for="input-deadband" style="font-size: 0.8rem; color: #A9B8C9;">Filter: <b id="val-deadband" style="color: #EEA320;">3%</b></label>
+          <input type="range" id="input-deadband" min="0" max="15" value="3" style="width: 100%; margin-top: 4px;" />
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="calib-step" id="step-4">
+        <div class="step-num">4</div>
+        <div class="step-details">
+          <h4>Apply Calibration</h4>
+          <p>Save computed parameters.</p>
+          <button id="btn-calib-save" class="btn-secondary" disabled>Apply Calibration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: MOTION RADAR & TELEMETRY -->
+    <div class="calib-main">
+      
+      <!-- Motion Radar Canvas -->
+      <div class="calib-card plot-card">
+        <div class="plot-header">
+          <h3>Magnetic Motion Trace (Bx vs By)</h3>
+          <button id="btn-clear-plot" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;">Clear Plot</button>
+        </div>
+        
+        <div class="canvas-wrapper">
+          <canvas id="calib-canvas" width="300" height="300"></canvas>
+        </div>
+      </div>
+
+      <!-- Live Telemetry Bar -->
+      <div class="calib-card telemetry-card">
+        <div class="telem-item">
+          <span class="telem-label">Offset X</span>
+          <span class="telem-val" id="telem-off-x">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Offset Y</span>
+          <span class="telem-val" id="telem-off-y">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Min/Max Span</span>
+          <span class="telem-val" id="telem-span">0</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">Calib Status</span>
+          <span class="telem-val" id="telem-status" style="color: #EEA320;">Uncalibrated</span>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+    <!-- VIEW 3: NVRAM MEMORY SETTINGS -->
+<div id="view-memory" class="view">
+  
+  <!-- Memory Action Panel -->
+  <div class="mem-control-card">
+    <div class="mem-input-group">
+      <div class="mem-field">
+        <label for="nvram-addr">Address (Register)</label>
+        <input type="text" id="nvram-addr" placeholder="0x00 or 0" disabled />
+      </div>
+      <div class="mem-field">
+        <label for="nvram-val">Value (16-bit Word)</label>
+        <input type="text" id="nvram-val" placeholder="0x0000 or 0" disabled />
+      </div>
+      <div class="mem-actions">
+        <button id="btn-nvram-read" class="btn-secondary" disabled>Read</button>
+        <button id="btn-nvram-write" disabled>Write</button>
+      </div>
+    </div>
+
+    <!-- Quick Store/Recall Utilities -->
+    <div class="mem-tools">
+      <button id="btn-nvram-dump" class="btn-secondary" disabled>Dump All Regs</button>
+      <button id="btn-nvram-hs" class="btn-secondary" disabled title="Store RAM to EEPROM/NVRAM">Store (HS)</button>
+      <button id="btn-nvram-hr" class="btn-secondary" disabled title="Recall EEPROM/NVRAM to RAM">Recall (HR)</button>
+    </div>
+  </div>
+
+  <!-- Memory Visualization Table -->
+  <div class="mem-table-wrapper">
+    <div class="mem-table-header">
+      <h3>Register Map (0x00 - 0x3F)</h3>
+      <span id="mem-status-badge" class="mem-badge">Ready</span>
+    </div>
+    <div class="table-scroll-container">
+      <table class="mem-table">
+        <thead>
+          <tr>
+            <th>Reg (Hex)</th>
+            <th>Reg (Dec)</th>
+            <th>Value (Hex)</th>
+            <th>Value (Dec)</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="nvram-table-body">
+          <!-- Rows dynamically generated by app.js -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+    <!-- VIEW 1: 3D JOYSTICK -->
+    <div id="view-joystick" class="view active">
+      <div class="joystick-wrapper">
+        <div class="joystick" id="joystick-base">
+          <div class="joystick__zero"></div>
+          <div class="joystick__stick" id="joystick-stick"></div>
+          <div class="joystick__ball"></div>
+        </div>
+      </div>
+      
+      <!-- DEMO CONTROLS -->
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
+        <button id="btn-start-demo" disabled>Start</button>
+        <button id="btn-stop-demo"  disabled>Stop</button>
+        <button id="btn-toggle-debug" class="btn-secondary">Debug</button>
+      </div>
+
+      <!-- NEW: MINI TERMINAL -->
+      <div id="mini-log-window" class="log-window" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
+
+      <!-- NEW: API TEST BUTTONS -->
+      <div style="margin-top: 20px; text-align: center;">
+        <h4 style="color: #A9B8C9; margin-bottom: 12px; font-size: 0.9rem; text-transform: uppercase;">Device Commands</h4>
+        <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 600px; margin: 0 auto;">
+          <button class="api-btn btn-secondary" data-api="rt" disabled>Reset</button>
+          <button class="api-btn btn-secondary" data-api="hs" disabled>Memory Store</button>
+          <button class="api-btn btn-secondary" data-api="hr" disabled>Memory Recall</button>
+          <button class="api-btn btn-secondary" data-api="ex" disabled>Idle mode</button>
+          <button class="api-btn btn-secondary" data-api="rr" disabled>Read Register</button>
+          <button class="api-btn btn-secondary" data-api="wr" disabled>Write Register</button>
+          <button class="api-btn btn-secondary" data-api="sb" disabled>Burst mode</button>
+          <button class="api-btn btn-secondary" data-api="swoc" disabled>WOC mode</button>
+          <button class="api-btn btn-secondary" data-api="sm" disabled>Single measurement</button>
+          <button class="api-btn btn-secondary" data-api="rm_xyz" disabled>Read memory</button>
+          <button class="api-btn btn-secondary" data-api="rm_sfi" disabled>RM (SFI)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: SCPI TERMINAL -->
+    <div id="view-terminal" class="view">
+      <div class="terminal-wrapper">
+        <div class="main-terminal">
+          <div id="log-window" class="log-window"></div>
+          
+          <div class="input-row">
+            <input type="text" id="tx-input" placeholder="Type SCPI command..." disabled />
+            <button id="btn-send" disabled>Send</button>
+          </div>
+
+          <div class="settings-row">
+            <label>EOL: 
+              <select id="sel-eol">
+                <option value="\n">LF</option>
+                <option value="\r">CR</option>
+                <option value="\r\n" selected>CRLF</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
+            <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
+            <button id="btn-clear" class="btn-secondary" style="padding: 4px 12px; margin-left: auto;">Clear</button>
+          </div>
+        </div>
+
+        <div class="sidebar">
+          <h3>Quick Cmds</h3>
+          <button class="quick-cmd btn-secondary" data-cmd="*IDN?">IDN?</button>
+          <button class="quick-cmd btn-secondary" data-cmd=":SYST:INFO">INFO</button>
+          <button class="quick-cmd btn-danger" data-cmd="*RST">Reset</button>
+          <hr style="width:100%; border:0; border-top:1px solid #2D3742; margin: 8px 0;">
+          <h3>History</h3>
+          <div id="history-list" class="history-list"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
