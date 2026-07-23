@@ -18,11 +18,46 @@ export class MLX90396_API {
       RM_TEMP: 0x41   // Read Measurement (With Temp)
   };
 
-  constructor(scpiQueryFn) {
+  constructor(scpiQueryFn, getSpiPrefixFn = () => ":SPI") {
       this.query = scpiQueryFn;
+      this.getSpiPrefix = typeof getSpiPrefixFn === 'function' ? getSpiPrefixFn : () => getSpiPrefixFn;
   }
 
   // --- Core SPI & Math Utilities ---
+
+async _send_spi(mosi_data, miso_len) {
+      const prefix = this.getSpiPrefix();
+      const txArray = [...mosi_data];
+      for (let i = 0; i < miso_len; i++) {
+          txArray.push(0x00);
+      }
+      const decStr = txArray.join(',');
+      
+      // 1. Assert CS0
+      await this.query(`${prefix}:CS0 0`);
+
+      // 2. Send SPI Transaction
+      const scpiCmd = `${prefix}:WriteReaD ${decStr}`;
+      const response = await this.query(scpiCmd);
+      
+      // 3. De-assert CS0
+      await this.query(`${prefix}:CS0 1`);
+      
+      if (!response) return Array(miso_len).fill(0);
+      
+      // Extract valid hex/dec byte tokens from SCPI response
+      const tokens = response.match(/0x[0-9a-fA-F]+|[0-9a-fA-F]+/g) || [];
+      const rxArray = tokens.map(tok => parseInt(tok, 16));
+
+      // Slice MISO payload after MOSI transmit bytes
+      if (rxArray.length >= mosi_data.length + miso_len) {
+        return rxArray.slice(mosi_data.length, mosi_data.length + miso_len);
+      } else if (rxArray.length >= miso_len) {
+        return rxArray.slice(-miso_len);
+      }
+      
+      return Array(miso_len).fill(0);
+  }
 
   _crc_2f(message) {
       let crc = 0xFF; 
@@ -50,33 +85,6 @@ export class MLX90396_API {
           if (++count > 6) return true; 
       }
       return false;
-  }
-
-  async _send_spi(mosi_data, miso_len) {
-      const txArray = [...mosi_data];
-      for (let i = 0; i < miso_len; i++) {
-          txArray.push(0x00);
-      }
-      const decStr = txArray.join(',');
-      
-      // 1. Assert CS0 and wait 5ms for hardware to catch up
-      await this.query(":SPI:CS0 0");
-    //   await new Promise(r => setTimeout(r, 5));
-
-      // 2. Send Data
-      const scpiCmd = `:SPI:WriteReaD ${decStr}`;
-      const response = await this.query(scpiCmd);
-      
-      // 3. De-assert CS0 and wait 5ms
-    //   await new Promise(r => setTimeout(r, 5));
-      await this.query(":SPI:CS0 1");
-      
-      // Failsafe if response is empty
-      if (!response) return Array(miso_len).fill(0);
-      
-      const hexValues = response.split(',');
-      const rxArray = hexValues.map(h => parseInt(h, 16));
-      return rxArray.slice(mosi_data.length);
   }
 
   // --- API Device Commands ---

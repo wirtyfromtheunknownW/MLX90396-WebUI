@@ -21,7 +21,7 @@ let isProcessingQueue = false;
 let rxLineBuffer = '';
 
 // FORCE DEFAULT EOL TO LF (\n)
-selEol.value = '\\n';
+if (selEol) selEol.value = '\\n';
 
 // --- State Variables ---
 let port = null, reader = null, writer = null;
@@ -29,22 +29,22 @@ let isConnected = false, isReading = false, isDemoRunning = false;
 let textDecoder, textEncoder;
 let readableStreamClosed, writableStreamClosed; 
 let mlxDevice = null;
-let scpiWaiter = null; 
 
 const history = [];
 let historyIndex = -1;
 let draftBeforeNav = '';
 
-// --- UI Tab Logic & Joystick Setup ---
+// --- UI Tab Logic ---
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById(btn.dataset.target).classList.add('active');
+    document.getElementById(btn.dataset.target)?.classList.add('active');
   });
 });
 
+// --- Joystick Model Setup ---
 const joystickBase = document.getElementById('joystick-base');
 const joystickStick = document.getElementById('joystick-stick');
 const leds = [];
@@ -52,6 +52,7 @@ const TOTAL_LEDS = 28;
 const ANGLE_STEP = 360 / TOTAL_LEDS;
 
 function initJoystickLEDs() {
+  if (!joystickBase) return;
   for (let i = 0; i < TOTAL_LEDS; i++) {
     const led = document.createElement('div');
     led.className = 'joystick__led';
@@ -64,12 +65,18 @@ initJoystickLEDs();
 
 function updateJoystickUI(x, y) {
   if (!joystickStick) return;
-  const radius = Math.sqrt(x*x + y*y);
-  let renderX = x, renderY = y;
+  
+  const safeX = typeof x === 'number' && !isNaN(x) ? x : 0;
+  const safeY = typeof y === 'number' && !isNaN(y) ? y : 0;
+  
+  const radius = Math.sqrt(safeX * safeX + safeY * safeY);
+  let renderX = safeX;
+  let renderY = safeY;
   
   if (radius > 50) {
     const scale = 50 / radius;
-    renderX *= scale; renderY *= scale;
+    renderX *= scale; 
+    renderY *= scale;
   }
   
   joystickStick.style.setProperty('--tx', renderX);
@@ -77,15 +84,17 @@ function updateJoystickUI(x, y) {
   leds.forEach(led => led.className = 'joystick__led');
 
   if (radius > 5) { 
-    let angleDeg = Math.atan2(y, x) * (180 / Math.PI);
+    let angleDeg = Math.atan2(safeY, safeX) * (180 / Math.PI);
     if (angleDeg < 0) angleDeg += 360;
     let activeIndex = Math.round(angleDeg / ANGLE_STEP) % TOTAL_LEDS;
 
     for (let i = -2; i <= 2; i++) {
       let targetIdx = (activeIndex + i + TOTAL_LEDS) % TOTAL_LEDS;
-      if (i === 0) leds[targetIdx].classList.add('led-active');
-      else if (Math.abs(i) === 1) leds[targetIdx].classList.add('led-low-1');
-      else leds[targetIdx].classList.add('led-low-2');
+      if (leds[targetIdx]) {
+        if (i === 0) leds[targetIdx].classList.add('led-active');
+        else if (Math.abs(i) === 1) leds[targetIdx].classList.add('led-low-1');
+        else leds[targetIdx].classList.add('led-low-2');
+      }
     }
   }
 }
@@ -137,22 +146,22 @@ function flushLog() {
   logQueue.length = 0;
 
   if (miniLogWindow) miniLogWindow.appendChild(frag.cloneNode(true));
-  logWindow.appendChild(frag);
+  if (logWindow) logWindow.appendChild(frag);
 
   if (logTotalChars > LOG_MAX_CHARS) {
-    while (logTotalChars > LOG_TRIM_TO && logWindow.firstChild) {
+    while (logTotalChars > LOG_TRIM_TO && logWindow && logWindow.firstChild) {
       const n = logWindow.firstChild;
       let len = parseInt(n.dataset?.len || 0, 10) || n.textContent?.length || 0;
       logTotalChars -= len;
       logWindow.removeChild(n);
     }
-    while (miniLogWindow && miniLogWindow.childNodes.length > logWindow.childNodes.length) {
+    while (miniLogWindow && miniLogWindow.childNodes.length > (logWindow?.childNodes.length || 0)) {
       miniLogWindow.removeChild(miniLogWindow.firstChild);
     }
   }
 
-  if (chkAutoScroll.checked) {
-    logWindow.scrollTop = logWindow.scrollHeight;
+  if (chkAutoScroll && chkAutoScroll.checked) {
+    if (logWindow) logWindow.scrollTop = logWindow.scrollHeight;
     if (miniLogWindow) miniLogWindow.scrollTop = miniLogWindow.scrollHeight;
   }
 }
@@ -163,10 +172,7 @@ function appendLog(text, cls) {
   scheduleLogFlush();
 }
 
-// --- TRUE SCPI RX PARSER (BULLETPROOF REAL-TIME EVALUATION) ---
-let rxBuffer = '';
-let lastDataLine = '';
-
+// --- SCPI RX PARSER ---
 function processRx(text) {
   rxLineBuffer += text;
 
@@ -174,32 +180,27 @@ function processRx(text) {
     const okIdx = rxLineBuffer.indexOf('(OK)>');
     const errIdx = rxLineBuffer.search(/\(ERR\)>|\(E2BIG\)>|\(ERANGE\)>/);
 
-    // Case 1: Prompt found
     if (okIdx !== -1 && (errIdx === -1 || okIdx < errIdx)) {
       const fullMatch = rxLineBuffer.substring(0, okIdx + 5);
       rxLineBuffer = rxLineBuffer.substring(okIdx + 5);
       handleDeviceResponse(fullMatch, false);
-    } 
-    // Case 2: Error prompt found
-    else if (errIdx !== -1) {
+    } else if (errIdx !== -1) {
       const endIdx = rxLineBuffer.indexOf('>', errIdx);
       if (endIdx !== -1) {
         const fullMatch = rxLineBuffer.substring(0, endIdx + 1);
         rxLineBuffer = rxLineBuffer.substring(endIdx + 1);
         handleDeviceResponse(fullMatch, true);
       } else {
-        break; // Wait for full error prompt
+        break;
       }
-    } 
-    // Case 3: Line break without prompt (logs/debug)
-    else {
+    } else {
       const nlIdx = rxLineBuffer.search(/[\r\n]/);
       if (nlIdx !== -1) {
         const line = rxLineBuffer.substring(0, nlIdx).trim();
         if (line) appendLog(line + '\n', 'log-rx');
         rxLineBuffer = rxLineBuffer.substring(nlIdx + 1);
       } else {
-        break; // Need more bytes from Serial stream
+        break;
       }
     }
   }
@@ -220,10 +221,7 @@ function handleDeviceResponse(rawResponse, isError) {
       isProcessingQueue = false;
       current.reject(new Error(trimmed));
     } else {
-      // 1. Remove (OK)> prompt
       let cleanData = trimmed.replace('(OK)>', '').trim();
-      
-      // 2. Strip echoed command prefix if MCU echoed it back
       if (cleanData.startsWith(current.cmd)) {
         cleanData = cleanData.substring(current.cmd.length).trim();
       }
@@ -233,13 +231,12 @@ function handleDeviceResponse(rawResponse, isError) {
       current.resolve(cleanData);
     }
 
-    // Immediately trigger the next query waiting in line
     setTimeout(processQueryQueue, 0);
   }
 }
 
-// --- TX Logic & Query Wrapper ---
 function getEol() {
+  if (!selEol) return '\n';
   const v = selEol.value;
   if (v === '\\n') return '\n';
   if (v === '\\r') return '\r';
@@ -248,6 +245,7 @@ function getEol() {
 }
 
 function updateHistoryUI() {
+  if (!historyList) return;
   historyList.innerHTML = '';
   const displayLimit = Math.min(history.length, 10);
   for (let i = 0; i < displayLimit; i++) {
@@ -267,7 +265,7 @@ async function sendCommand(cmd, echo = true, recordHistory = true) {
   const text = raw + getEol();
   try {
     await writer.write(text);
-    if (echo && chkEcho.checked) appendLog(text, 'log-echo');
+    if (echo && chkEcho && chkEcho.checked) appendLog(text, 'log-echo');
     
     if (recordHistory && history[0] !== raw) {
       history.unshift(raw);
@@ -275,7 +273,7 @@ async function sendCommand(cmd, echo = true, recordHistory = true) {
       updateHistoryUI();
     }
     
-    txInput.value = '';
+    if (txInput) txInput.value = '';
     historyIndex = -1;
     draftBeforeNav = '';
   } catch (err) {
@@ -301,13 +299,12 @@ async function processQueryQueue() {
   isProcessingQueue = true;
   const current = queryQueue[0];
 
-  // Individual 1.5s timeout for the active command in queue
   current.timer = setTimeout(() => {
     if (queryQueue[0] === current) {
       queryQueue.shift();
       isProcessingQueue = false;
       current.reject(new Error("Device Timeout on command: " + current.cmd));
-      processQueryQueue(); // Process next queued command
+      processQueryQueue();
     }
   }, 1500);
 
@@ -322,20 +319,19 @@ async function processQueryQueue() {
   }
 }
 
-// --- Connection Logic ---
+// --- Unified Connection UI Manager ---
 function setUIConnected(connected) {
   isConnected = connected;
   btnConnect.textContent = connected ? 'Disconnect' : 'Connect USB';
   if (connected) btnConnect.classList.add('btn-danger');
   else btnConnect.classList.remove('btn-danger');
   
-  txInput.disabled = !connected;
-  btnSend.disabled = !connected;
-  btnStartDemo.disabled = !connected;
+  if (txInput) txInput.disabled = !connected;
+  if (btnSend) btnSend.disabled = !connected;
   
   apiTestButtons.forEach(btn => btn.disabled = !connected);
 
-  // --- ADD THESE NVRAM LINES HERE ---
+  // NVRAM Controls
   const nvramAddr = document.getElementById('nvram-addr');
   if (nvramAddr) {
     nvramAddr.disabled = !connected;
@@ -345,6 +341,14 @@ function setUIConnected(connected) {
     document.getElementById('btn-nvram-dump').disabled = !connected;
     document.getElementById('btn-nvram-hs').disabled = !connected;
     document.getElementById('btn-nvram-hr').disabled = !connected;
+  }
+
+  // Calibration Controls
+  const btnCalibZero = document.getElementById('btn-calib-zero');
+  if (btnCalibZero) {
+    btnCalibZero.disabled = !connected;
+    document.getElementById('btn-calib-sweep').disabled = !connected;
+    document.getElementById('btn-calib-save').disabled = !connected;
   }
 }
 
@@ -362,10 +366,11 @@ async function connectSerial() {
     writer = textEncoder.writable.getWriter();
 
     isReading = true;
-    mlxDevice = new MLX90396_API(scpiQuery);
+    
+    mlxDevice = new MLX90396_API(scpiQuery, getSpiPrefix);
     setUIConnected(true);
     
-    appendLog('[SYSTEM] Port opened successfully.\n', 'log-okprompt');
+    appendLog(`[SYSTEM] Port opened with bus ${getSpiPrefix()}.\n`, 'log-okprompt');
 
     (async () => {
       try {
@@ -401,7 +406,7 @@ async function disconnectSerial() {
   appendLog('[SYSTEM] Port closed.\n', 'log-badprompt');
 }
 
-// --- API Testing Logic ---
+// --- API Test Commands ---
 async function testApiCommand(cmdType) {
   if (!mlxDevice) return;
   appendLog(`[TEST] Executing API Command: ${cmdType.toUpperCase()}...\n`, 'log-okprompt');
@@ -431,40 +436,51 @@ apiTestButtons.forEach(btn => {
   btn.addEventListener('click', () => testApiCommand(btn.dataset.api));
 });
 
-// --- Hardware Setup & Demo Loop ---
+// --- Joystick Demo Loop (Hardware OR Standalone Emulation) ---
 async function runJoystickDemo() {
   btnStartDemo.disabled = true;
   btnStopDemo.disabled = false;
   isDemoRunning = true;
 
-  const USE_HARDWARE_DEMO = true; 
-
-  if (USE_HARDWARE_DEMO) {
+  if (isConnected && mlxDevice) {
+    const prefix = getSpiPrefix();
     try {
-      appendLog('[SYSTEM] Initializing Hardware...\n', 'log-okprompt');
-      await scpiQuery(":SPI:Init 0");
+      appendLog(`[SYSTEM] Initializing Hardware on ${prefix}...\n`, 'log-okprompt');
+      await scpiQuery(`${prefix}:Init 0`);
       await scpiQuery(":CON:CS1:GPIO:INIT:OUT 0");
       await scpiQuery(":SPI:BUFfer 1,1,1,1,0"); 
       await scpiQuery(":VDD:OFF");
-      await new Promise(r => setTimeout(r, 200)); 
+      await new Promise(r => setTimeout(r, 150)); 
       await scpiQuery(":VDD:3V3");
-      await new Promise(r => setTimeout(r, 200)); 
+      await new Promise(r => setTimeout(r, 150)); 
       appendLog('[SYSTEM] Hardware Ready. Starting Stream...\n', 'log-okprompt');
 
-    while (isDemoRunning) {
-    try {
-        await mlxDevice.sm(0x3E); 
-        await new Promise(r => setTimeout(r, 10)); // Allow MCU SPI conversion
-        
-        const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
-        updateJoystickUI(result.x0 / 20, result.y0 / 20); 
+      while (isDemoRunning) {
+        try {
+          // Trigger Single Measurement
+          await mlxDevice.sm(0x3E); 
+          await new Promise(r => setTimeout(r, 10)); 
+          
+          // Read Joystick coordinates
+          const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
+          
+          if (result && typeof result.x0 === 'number' && !isNaN(result.x0)) {
+            const cal = processCalibratedCoordinates(result.x0, result.y0);
+            
+            // Render Joystick UI
+            updateJoystickUI(cal.x / 20, cal.y / 20); 
+          }
 
-        await new Promise(r => setTimeout(r, 30)); // Frame rate delay (~25 FPS)
-    } catch (loopErr) {
-        appendLog(`[LOOP WARN]: ${loopErr.message}\n`, 'log-badprompt');
-        await new Promise(r => setTimeout(r, 50)); 
-    }
-}
+          if (result && result.error) {
+            appendLog(`[SPI WARN] CRC Mismatch (Raw X: ${result.x0}, Y: ${result.y0})\n`, 'log-badprompt');
+          }
+
+          await new Promise(r => setTimeout(r, 30)); 
+        } catch (loopErr) {
+          appendLog(`[LOOP WARN]: ${loopErr.message}\n`, 'log-badprompt');
+          await new Promise(r => setTimeout(r, 50)); 
+        }
+      }
     } catch (err) {
       appendLog(`[DEMO ERROR]: ${err.message}\n`, 'log-badprompt');
       isDemoRunning = false;
@@ -472,12 +488,13 @@ async function runJoystickDemo() {
       btnStopDemo.disabled = true;
     }
   } else {
-    appendLog('[SYSTEM] Starting UI Emulation Mode...\n', 'log-okprompt');
+    // Standalone Emulation Mode
+    appendLog('[SYSTEM] Running Standalone UI Emulation...\n', 'log-okprompt');
     let angle = 0;
     while (isDemoRunning) {
-      angle += 0.15; 
-      const emulatedX = (Math.cos(angle) * 35) + (Math.sin(angle * 0.5) * 15);
-      const emulatedY = (Math.sin(angle) * 35) + (Math.cos(angle * 1.5) * 15);
+      angle += 0.12; 
+      const emulatedX = (Math.cos(angle) * 35) + (Math.sin(angle * 0.5) * 12);
+      const emulatedY = (Math.sin(angle) * 35) + (Math.cos(angle * 1.5) * 12);
       updateJoystickUI(emulatedX, emulatedY);
       await new Promise(r => setTimeout(r, 33)); 
     }
@@ -485,17 +502,17 @@ async function runJoystickDemo() {
 }
 
 // --- Event Listeners ---
-btnConnect.addEventListener('click', () => isConnected ? disconnectSerial() : connectSerial());
-btnSend.addEventListener('click', () => sendCommand(txInput.value));
-btnClear.addEventListener('click', () => { 
-  logWindow.textContent = ''; 
-  if(miniLogWindow) miniLogWindow.textContent = ''; 
+btnSend?.addEventListener('click', () => sendCommand(txInput.value));
+btnClear?.addEventListener('click', () => { 
+  if (logWindow) logWindow.textContent = ''; 
+  if (miniLogWindow) miniLogWindow.textContent = ''; 
   logTotalChars = 0; 
   logQueue.length = 0; 
 });
-btnStartDemo.addEventListener('click', runJoystickDemo);
 
-btnStopDemo.addEventListener('click', () => {
+btnStartDemo?.addEventListener('click', runJoystickDemo);
+
+btnStopDemo?.addEventListener('click', () => {
   isDemoRunning = false;
   btnStartDemo.disabled = false;
   btnStopDemo.disabled = true;
@@ -503,7 +520,7 @@ btnStopDemo.addEventListener('click', () => {
   appendLog('[SYSTEM] Demo stopped.\n', 'log-badprompt');
 });
 
-txInput.addEventListener('keydown', (e) => {
+txInput?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); sendCommand(txInput.value); return; }
   if (e.key === 'ArrowUp') {
     e.preventDefault();
@@ -528,7 +545,7 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
   btn.addEventListener('click', () => sendCommand(btn.dataset.cmd));
 });
 
-// --- NVRAM MEMORY CONTROLLER ---
+// --- NVRAM Controller ---
 const nvramAddr = document.getElementById('nvram-addr');
 const nvramVal = document.getElementById('nvram-val');
 const btnNvramRead = document.getElementById('btn-nvram-read');
@@ -539,11 +556,11 @@ const btnNvramHr = document.getElementById('btn-nvram-hr');
 const nvramTableBody = document.getElementById('nvram-table-body');
 const memStatusBadge = document.getElementById('mem-status-badge');
 
-const TOTAL_REGS = 64; // Registers 0x00 to 0x3F
+const TOTAL_REGS = 64;
 const registerState = new Array(TOTAL_REGS).fill(null);
 
-// Initialize Memory Table
 function initMemoryTable() {
+  if (!nvramTableBody) return;
   nvramTableBody.innerHTML = '';
   for (let i = 0; i < TOTAL_REGS; i++) {
     const tr = document.createElement('tr');
@@ -563,8 +580,8 @@ function initMemoryTable() {
       document.querySelectorAll('.mem-table tr').forEach(r => r.classList.remove('selected-row'));
       tr.classList.add('selected-row');
       
-      nvramAddr.value = hexReg;
-      if (registerState[i] !== null) {
+      if (nvramAddr) nvramAddr.value = hexReg;
+      if (registerState[i] !== null && nvramVal) {
         nvramVal.value = '0x' + registerState[i].toString(16).padStart(4, '0').toUpperCase();
       }
     });
@@ -574,30 +591,15 @@ function initMemoryTable() {
 }
 initMemoryTable();
 
-// Enable/Disable Memory UI components based on serial state
-// const originalSetUIConnected = setUIConnected;
-// setUIConnected = function(connected) {
-//   originalSetUIConnected(connected);
-//   nvramAddr.disabled = !connected;
-//   nvramVal.disabled = !connected;
-//   btnNvramRead.disabled = !connected;
-//   btnNvramWrite.disabled = !connected;
-//   btnNvramDump.disabled = !connected;
-//   btnNvramHs.disabled = !connected;
-//   btnNvramHr.disabled = !connected;
-// };
-
-// Helper: Parse Hex or Dec Input
 function parseInputNumber(val) {
   if (!val) return NaN;
   const str = val.trim();
   return str.startsWith('0x') || str.startsWith('0X') ? parseInt(str, 16) : parseInt(str, 10);
 }
 
-// Update single row in table UI
 function updateTableRegisterUI(reg, val, statusText = 'OK') {
   registerState[reg] = val;
-  const tr = nvramTableBody.querySelector(`tr[data-reg="${reg}"]`);
+  const tr = nvramTableBody?.querySelector(`tr[data-reg="${reg}"]`);
   if (!tr) return;
 
   const hexCell = tr.querySelector('.cell-hex');
@@ -606,28 +608,27 @@ function updateTableRegisterUI(reg, val, statusText = 'OK') {
 
   const hexVal = '0x' + val.toString(16).padStart(4, '0').toUpperCase();
   
-  hexCell.textContent = hexVal;
-  decCell.textContent = val;
-  statusCell.textContent = statusText;
+  if (hexCell) hexCell.textContent = hexVal;
+  if (decCell) decCell.textContent = val;
+  if (statusCell) statusCell.textContent = statusText;
 
-  hexCell.classList.add('val-updated');
-  setTimeout(() => hexCell.classList.remove('val-updated'), 1000);
+  hexCell?.classList.add('val-updated');
+  setTimeout(() => hexCell?.classList.remove('val-updated'), 1000);
 }
 
-// READ Register
 async function readMemoryRegister() {
-  const reg = parseInputNumber(nvramAddr.value);
+  const reg = parseInputNumber(nvramAddr?.value);
   if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
     appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
     return;
   }
 
   try {
-    memStatusBadge.textContent = `Reading ${reg}...`;
+    if (memStatusBadge) memStatusBadge.textContent = `Reading ${reg}...`;
     const res = await mlxDevice.rr(reg);
     
     if (!res.error) {
-      nvramVal.value = '0x' + res.data.toString(16).padStart(4, '0').toUpperCase();
+      if (nvramVal) nvramVal.value = '0x' + res.data.toString(16).padStart(4, '0').toUpperCase();
       updateTableRegisterUI(reg, res.data, 'Read OK');
       appendLog(`[MEM READ] Reg 0x${reg.toString(16).toUpperCase()}: 0x${res.data.toString(16).toUpperCase()}\n`, 'log-okprompt');
     } else {
@@ -636,14 +637,13 @@ async function readMemoryRegister() {
   } catch (err) {
     appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
   } finally {
-    memStatusBadge.textContent = 'Ready';
+    if (memStatusBadge) memStatusBadge.textContent = 'Ready';
   }
 }
 
-// WRITE Register
 async function writeMemoryRegister() {
-  const reg = parseInputNumber(nvramAddr.value);
-  const val = parseInputNumber(nvramVal.value);
+  const reg = parseInputNumber(nvramAddr?.value);
+  const val = parseInputNumber(nvramVal?.value);
 
   if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
     appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
@@ -655,7 +655,7 @@ async function writeMemoryRegister() {
   }
 
   try {
-    memStatusBadge.textContent = `Writing ${reg}...`;
+    if (memStatusBadge) memStatusBadge.textContent = `Writing ${reg}...`;
     const err = await mlxDevice.wr(reg, val);
     
     if (!err) {
@@ -667,42 +667,40 @@ async function writeMemoryRegister() {
   } catch (err) {
     appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
   } finally {
-    memStatusBadge.textContent = 'Ready';
+    if (memStatusBadge) memStatusBadge.textContent = 'Ready';
   }
 }
 
-// Dump All Registers
 async function dumpAllMemory() {
-  btnNvramDump.disabled = true;
+  if (btnNvramDump) btnNvramDump.disabled = true;
   appendLog('[MEM DUMP] Starting full register scan...\n', 'log-okprompt');
   
   for (let i = 0; i < TOTAL_REGS; i++) {
     try {
-      memStatusBadge.textContent = `Dumping ${i}/${TOTAL_REGS}`;
+      if (memStatusBadge) memStatusBadge.textContent = `Dumping ${i}/${TOTAL_REGS}`;
       const res = await mlxDevice.rr(i);
       if (!res.error) {
         updateTableRegisterUI(i, res.data, 'Dumped');
       }
-      await new Promise(r => setTimeout(r, 10)); // Prevent serial queue flooding
+      await new Promise(r => setTimeout(r, 10));
     } catch (err) {
       appendLog(`[MEM DUMP WARN] Error at reg ${i}: ${err.message}\n`, 'log-badprompt');
     }
   }
   
-  memStatusBadge.textContent = 'Ready';
-  btnNvramDump.disabled = false;
+  if (memStatusBadge) memStatusBadge.textContent = 'Ready';
+  if (btnNvramDump) btnNvramDump.disabled = false;
   appendLog('[MEM DUMP] Register scan completed.\n', 'log-okprompt');
 }
 
-// Event Listeners
-btnNvramRead.addEventListener('click', readMemoryRegister);
-btnNvramWrite.addEventListener('click', writeMemoryRegister);
-btnNvramDump.addEventListener('click', dumpAllMemory);
-btnNvramHs.addEventListener('click', async () => {
+btnNvramRead?.addEventListener('click', readMemoryRegister);
+btnNvramWrite?.addEventListener('click', writeMemoryRegister);
+btnNvramDump?.addEventListener('click', dumpAllMemory);
+btnNvramHs?.addEventListener('click', async () => {
   await mlxDevice.hs();
   appendLog('[MEM] Memory Store command (HS) executed.\n', 'log-okprompt');
 });
-btnNvramHr.addEventListener('click', async () => {
+btnNvramHr?.addEventListener('click', async () => {
   await mlxDevice.hr();
   appendLog('[MEM] Memory Recall command (HR) executed.\n', 'log-okprompt');
 });
@@ -722,7 +720,6 @@ const calibState = {
 
 const sweepPoints = [];
 
-// UI Elements
 const btnCalibZero = document.getElementById('btn-calib-zero');
 const btnCalibSweep = document.getElementById('btn-calib-sweep');
 const btnCalibSave = document.getElementById('btn-calib-save');
@@ -731,18 +728,8 @@ const valDeadband = document.getElementById('val-deadband');
 const calibCanvas = document.getElementById('calib-canvas');
 const ctxCalib = calibCanvas ? calibCanvas.getContext('2d') : null;
 
-// Enable buttons when device connects
-const calibSetUIConnected = setUIConnected;
-setUIConnected = function(connected) {
-  calibSetUIConnected(connected);
-  if (btnCalibZero) btnCalibZero.disabled = !connected;
-  if (btnCalibSweep) btnCalibSweep.disabled = !connected;
-  if (btnCalibSave) btnCalibSave.disabled = !connected;
-};
-
-// Canvas Radar Grid Drawing
 function drawRadarGrid() {
-  if (!ctxCalib) return;
+  if (!ctxCalib || !calibCanvas) return;
   const w = calibCanvas.width;
   const h = calibCanvas.height;
   const cx = w / 2;
@@ -750,7 +737,6 @@ function drawRadarGrid() {
 
   ctxCalib.clearRect(0, 0, w, h);
 
-  // Target Rings
   ctxCalib.strokeStyle = '#1F3A62';
   ctxCalib.lineWidth = 1;
   [35, 70, 110].forEach(r => {
@@ -759,13 +745,11 @@ function drawRadarGrid() {
     ctxCalib.stroke();
   });
 
-  // Crosshairs
   ctxCalib.beginPath();
   ctxCalib.moveTo(cx, 10); ctxCalib.lineTo(cx, h - 10);
   ctxCalib.moveTo(10, cy); ctxCalib.lineTo(w - 10, cy);
   ctxCalib.stroke();
 
-  // Draw Captured Trace Points
   if (sweepPoints.length > 1) {
     ctxCalib.strokeStyle = '#59FFB0';
     ctxCalib.lineWidth = 2;
@@ -773,7 +757,6 @@ function drawRadarGrid() {
 
     for (let i = 0; i < sweepPoints.length; i++) {
       const pt = sweepPoints[i];
-      // Scale raw values to canvas pixels (~30 LSB/px)
       const px = cx + ((pt.x - calibState.offsetX) / 25);
       const py = cy - ((pt.y - calibState.offsetY) / 25);
 
@@ -785,7 +768,6 @@ function drawRadarGrid() {
 }
 drawRadarGrid();
 
-// Step 1: Capture Zero Center
 btnCalibZero?.addEventListener('click', async () => {
   try {
     const res = await mlxDevice.rm_joystick_xyz(false, 0x3E);
@@ -793,12 +775,13 @@ btnCalibZero?.addEventListener('click', async () => {
       calibState.offsetX = res.x0;
       calibState.offsetY = res.y0;
 
-      document.getElementById('telem-off-x').textContent = calibState.offsetX;
-      document.getElementById('telem-off-y').textContent = calibState.offsetY;
+      const offX = document.getElementById('telem-off-x');
+      const offY = document.getElementById('telem-off-y');
+      if (offX) offX.textContent = calibState.offsetX;
+      if (offY) offY.textContent = calibState.offsetY;
       
-      // Update step wizard UI
-      document.getElementById('step-1').classList.remove('active');
-      document.getElementById('step-2').classList.add('active');
+      document.getElementById('step-1')?.classList.remove('active');
+      document.getElementById('step-2')?.classList.add('active');
       appendLog(`[CALIB] Zero Center Captured: X=${calibState.offsetX}, Y=${calibState.offsetY}\n`, 'log-okprompt');
     }
   } catch (err) {
@@ -806,7 +789,6 @@ btnCalibZero?.addEventListener('click', async () => {
   }
 });
 
-// Step 2: Toggle Range Sweep Mode
 btnCalibSweep?.addEventListener('click', () => {
   calibState.isSweeping = !calibState.isSweeping;
 
@@ -819,58 +801,58 @@ btnCalibSweep?.addEventListener('click', () => {
     btnCalibSweep.textContent = 'Start Sweep Recording';
     btnCalibSweep.classList.remove('btn-danger');
     
-    document.getElementById('step-2').classList.remove('active');
-    document.getElementById('step-3').classList.add('active');
+    document.getElementById('step-2')?.classList.remove('active');
+    document.getElementById('step-3')?.classList.add('active');
 
     const spanX = calibState.maxX - calibState.minX;
     const spanY = calibState.maxY - calibState.minY;
-    document.getElementById('telem-span').textContent = `${spanX} x ${spanY}`;
+    const telemSpan = document.getElementById('telem-span');
+    if (telemSpan) telemSpan.textContent = `${spanX} x ${spanY}`;
     appendLog(`[CALIB] Sweep finished. Span X: ${spanX}, Span Y: ${spanY}\n`, 'log-okprompt');
   }
 });
 
-// Step 3: Deadband Slider Adjust
 inputDeadband?.addEventListener('input', (e) => {
   calibState.deadbandPct = parseInt(e.target.value, 10);
   if (valDeadband) valDeadband.textContent = `${calibState.deadbandPct}%`;
 });
 
-// Step 4: Apply Calibration
 btnCalibSave?.addEventListener('click', () => {
   calibState.isCalibrated = true;
-  document.getElementById('telem-status').textContent = 'Active (Calibrated)';
-  document.getElementById('telem-status').style.color = '#59FFB0';
+  const statusEl = document.getElementById('telem-status');
+  if (statusEl) {
+    statusEl.textContent = 'Active (Calibrated)';
+    statusEl.style.color = '#59FFB0';
+  }
   
-  document.getElementById('step-3').classList.remove('active');
-  document.getElementById('step-4').classList.add('active');
+  document.getElementById('step-3')?.classList.remove('active');
+  document.getElementById('step-4')?.classList.add('active');
   
   appendLog('[CALIB] Calibration profile applied successfully.\n', 'log-okprompt');
 });
 
-// Clear Plot Button
 document.getElementById('btn-clear-plot')?.addEventListener('click', () => {
   sweepPoints.length = 0;
   drawRadarGrid();
 });
 
-// Helper function to process raw values through active calibration settings
-export function processCalibratedCoordinates(rawX, rawY) {
-  // 1. Subtract Zero Center
-  let x = rawX - calibState.offsetX;
-  let y = rawY - calibState.offsetY;
+function processCalibratedCoordinates(rawX, rawY) {
+  const rx = typeof rawX === 'number' && !isNaN(rawX) ? rawX : 0;
+  const ry = typeof rawY === 'number' && !isNaN(rawY) ? rawY : 0;
 
-  // 2. Capture Min/Max during active sweep mode
+  let x = rx - calibState.offsetX;
+  let y = ry - calibState.offsetY;
+
   if (calibState.isSweeping) {
     if (x < calibState.minX) calibState.minX = x;
     if (x > calibState.maxX) calibState.maxX = x;
     if (y < calibState.minY) calibState.minY = y;
     if (y > calibState.maxY) calibState.maxY = y;
 
-    sweepPoints.push({ x: rawX, y: rawY });
-    if (sweepPoints.length % 3 === 0) drawRadarGrid(); // Redraw canvas periodically
+    sweepPoints.push({ x: rx, y: ry });
+    if (sweepPoints.length % 3 === 0) drawRadarGrid();
   }
 
-  // 3. Apply Deadband Filter
   if (calibState.isCalibrated) {
     const radius = Math.sqrt(x * x + y * y);
     const maxSpan = Math.max(calibState.maxX || 1000, 1000);
@@ -888,16 +870,34 @@ export function processCalibratedCoordinates(rawX, rawY) {
 // --- Debug Terminal Toggle ---
 const btnToggleDebug = document.getElementById('btn-toggle-debug');
 
-btnToggleDebug.addEventListener('click', () => {
+btnToggleDebug?.addEventListener('click', () => {
   if (!miniLogWindow) return;
-  
-  // Toggle visibility class on the mini terminal window
-  const isHidden = miniLogWindow.classList.toggle('hidden');
-  
-//   // Highlight the Debug button when active
-//   if (isHidden) {
-//     btnToggleDebug.classList.add('btn-secondary');
-//   } else {
-//     btnToggleDebug.classList.remove('btn-secondary');
-//   }
+  miniLogWindow.classList.toggle('hidden');
+});
+
+// --- SPI Prefix & Connection Modal Logic ---
+const selConnType = document.getElementById('sel-conn-type');
+const connectModal = document.getElementById('connect-modal');
+const btnModalConnect = document.getElementById('btn-modal-connect');
+const btnCloseModal = document.getElementById('btn-close-modal');
+
+function getSpiPrefix() {
+  return selConnType ? selConnType.value : ':SPI';
+}
+
+btnConnect?.addEventListener('click', () => {
+  if (isConnected) {
+    disconnectSerial();
+  } else {
+    connectModal?.classList.remove('hidden');
+  }
+});
+
+btnCloseModal?.addEventListener('click', () => {
+  connectModal?.classList.add('hidden');
+});
+
+btnModalConnect?.addEventListener('click', async () => {
+  connectModal?.classList.add('hidden');
+  await connectSerial();
 });

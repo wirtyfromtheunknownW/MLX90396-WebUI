@@ -1,72 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MLX90396 Web UI</title>
-  <style>
-    :root {
-      color-scheme: light;
-      font-family: Inter, system-ui, -apple-system, sans-serif;
-      background-image: url('resources/background.jpg'); 
-      background-size: cover;        /* Scales image to fill the screen */
-      background-position: center;   /* Keeps image centered */
-      background-repeat: no-repeat;  /* Prevents image tiling */
-      background-attachment: fixed;  /* Keeps background still while scrolling */
-      background-color: #00354B;     /* Fallback color while image loads */
-      color: #E9F2FF;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px;
-    }
-    .app-shell {
-      width: min(800px, 100%); background: #00354B; border-radius: 1px;
-      padding: 32px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
-      border: 1px solid #2D3742;
-    }
-    
-    /* Global Controls */
-    .header-row {
-      display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
-      border-bottom: 1px solid #2D3742; padding-bottom: 16px;
-    }
-    .header-row h1 { margin: 0; font-size: 1.5rem; }
-    
-    button {
-      border: none; border-radius: 1px; cursor: pointer; background: #65BBA9; color: white;
-      font-size: 0.95rem; padding: 10px 20px; transition: 0.2s; font-weight: 600;
-    }
-    button:hover { background: #65BBA9; opacity: 0.6; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn-danger { background: #DB4140; } .btn-danger:hover { background: #DB4140;  }
-    .btn-secondary { background: #8fc1cc; } .btn-secondary:hover { background: #8fc1cc; opacity: 0.6; }
+  
+  <!-- 1. External Design System -->
+  <link rel="stylesheet" href="webdesign.css" />
 
-    /* Tabs */
-    .tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
-    .tab-btn {
-      background: transparent; color: #A9B8C9; border: 2px solid transparent; 
-      border-radius: 1px; padding: 8px 16px; font-weight: 600; cursor: pointer;
+  <!-- 2. Local Hardware-Specific Styles (3D Joystick & Canvas) -->
+  <style>
+    /* Custom Page Overrides */
+    body {
+      background-image: linear-gradient(rgba(0, 53, 75, 0.85), rgba(0, 53, 75, 0.85)), url('resources/background.jpg');
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
-    .tab-btn.active { background: #132943; color: #E9F2FF; border-color: #1F3A62; }
-    .tab-btn:hover:not(.active) { background: #1a273b; }
-    
+
+    .app-shell {
+      width: min(850px, 100%);
+      background: var(--color-surface-raised);
+      border: 1.5px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 32px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      border-bottom: 1.5px solid var(--color-border);
+      padding-bottom: 16px;
+    }
+
     .view { display: none; }
     .view.active { display: block; }
 
-    /* --- COMPILED SCSS 3D JOYSTICK --- */
+    /* --- COMPILED SCSS 3D JOYSTICK (Local Component) --- */
     .joystick-wrapper {
       display: flex; justify-content: center; align-items: center; 
-      padding: 60px; min-height: 400px; position: relative;
+      padding: 60px; min-height: 380px; position: relative;
     }
     .joystick {
       background: radial-gradient(at 75% 75%, #f2f2f2 0%, #d9d9d9 100%);
       box-shadow: 0 -5px 5px rgba(255, 255, 255, 0.1), 0 5px 5px rgba(255, 255, 255, 0.05), 
                   inset 0 5px 5px rgba(0, 0, 0, 0.02), inset 0 -5px 5px rgba(255, 255, 255, 0.05);
-      position: relative;
-      height: 200px;
-      width: 200px;
-      border-radius: 50%;
+      position: relative; height: 200px; width: 200px; border-radius: 50%;
     }
     .joystick__ball {
       background: radial-gradient(at 25% 25%, #f2f2f2 0%, #d9d9d9 100%);
@@ -81,18 +67,14 @@
       position: absolute; z-index: 4; height: 30%; width: 30%; border-radius: 50%;
       top: 50%; left: 50%; transform: translate(-50%, -50%);
     }
-    
-    /* Dynamic Stick powered by JS variables */
     .joystick__stick {
       background: radial-gradient(at 50% 75%, #f2f2f2 0%, #d9d9d9 100%);
       position: absolute; z-index: 2; height: 50%; width: 50%; border-radius: 50%;
       top: 50%; left: 50%; margin: -25% -25%;
       transition: transform 100ms ease, box-shadow 100ms ease;
-      
       transform: translate(calc(var(--tx, 0) * 1%), calc(var(--ty, 0) * 1%)) 
                  rotateX(calc(var(--ty, 0) * 0.5deg)) 
                  rotateY(calc(var(--tx, 0) * -0.5deg));
-                 
       box-shadow: inset calc(var(--tx, 0) * 0.25px) calc(var(--ty, 0) * 0.25px) 10px rgba(255, 255, 255, 0.3),
                   inset calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 10px rgba(0, 0, 0, 0.15),
                   0 2px 10px -5px rgba(0, 0, 0, 0.7),
@@ -114,447 +96,49 @@
       filter: blur(5px); opacity: 0.4;
     }
 
-  /* --- NVRAM MEMORY VIEW STYLES --- */
-  .mem-control-card {
-    background: #00354B;
-    border: 1px solid #b2c4cb;
-    border-radius: 1px;
-    padding: 20px;
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .mem-input-group {
-    display: flex;
-    gap: 16px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-  }
-
-  .mem-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    flex: 1;
-    min-width: 140px;
-  }
-
-  .mem-field label {
-    font-size: 0.8rem;
-    color: #A9B8C9;
-    text-transform: uppercase;
-    font-weight: 600;
-  }
-
-  .mem-field input {
-    padding: 10px;
-    border-radius: 1px;
-    border: 1px solid #1F3A62;
-    background: #132943;
-    color: #E9F2FF;
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.95rem;
-  }
-
-  .mem-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .mem-tools {
-    display: flex;
-    gap: 8px;
-    border-top: 1px solid #2D3742;
-    padding-top: 14px;
-  }
-
-  .mem-table-wrapper {
-    background: #00354B;
-    border: 1px solid #b2c4cb;
-    border-radius: 1px;
-    padding: 20px;
-  }
-
-  .mem-table-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-  }
-
-  .mem-table-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    color: #E9F2FF;
-  }
-
-  .mem-badge {
-    font-size: 0.75rem;
-    padding: 4px 10px;
-    border-radius: 1px;
-    background: #132943;
-    color: #65BBA9;
-    border: 1px solid #1F3A62;
-    font-weight: 600;
-  }
-
-  .table-scroll-container {
-    max-height: 380px;
-    overflow-y: auto;
-    border: 1px solid #2D3742;
-    border-radius: 1px;
-  }
-
-  .mem-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.85rem;
-    text-align: left;
-  }
-
-  .mem-table th {
-    background: #132943;
-    color: #A9B8C9;
-    padding: 10px 14px;
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    border-bottom: 1px solid #2D3742;
-  }
-
-  .mem-table td {
-    padding: 8px 14px;
-    border-bottom: 1px solid #27313D;
-    color: #D9E2F2;
-  }
-
-  .mem-table tr:hover {
-    background: #253142;
-    cursor: pointer;
-  }
-
-  .mem-table tr.selected-row {
-    background: #1F3A62;
-  }
-
-  .mem-table td.val-updated {
-    color: #59ffb0;
-    font-weight: bold;
-  }
-
     /* LEDs */
     .joystick__led {
       position: absolute; top: -40px; left: 50%; width: 4px; height: 4px;
       border-radius: 50%; background: rgba(0, 0, 0, 0.7);
       transform-origin: 0 140px; transition: background 150ms ease, box-shadow 150ms ease;
     }
-    /* Dynamic LED Classes controlled by JS */
-    .led-active { background: #EEA320; box-shadow: 0 0 5px #EEA320; }
+    .led-active { background: var(--color-warning); box-shadow: 0 0 5px var(--color-warning); }
     .led-low-1 { background: #F2B630; box-shadow: 0 0 5px #F2B630; }
     .led-low-2 { background: #FCDA4F; box-shadow: 0 0 5px #FCDA4F; }
 
-    /* Terminal Layout */
-    .terminal-wrapper { display: flex; gap: 16px; align-items: stretch; }
-    .main-terminal { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+    /* Custom Terminal Code Box Override */
     .log-window {
-      height: 350px; background: #000; border-radius: 1px; padding: 12px;
+      height: 320px; background: var(--color-code-bg); border-radius: 3px; padding: 12px;
       font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
       overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap;
-      border: 1px solid #2D3742; color: #D9E2F2;
+      border: 1.5px solid var(--color-border); color: var(--color-code-fg);
     }
-    .log-echo { color: #4db2ff; } .log-rx { color: #d9dedc; } 
-    .log-okprompt { color: #59ffb0; } .log-badprompt { color: #ff7a7a; }
-    .input-row { display: flex; gap: 8px; }
-    .input-row input { 
-      flex: 1; padding: 10px; border-radius: 1px; border: 1px solid #1F3A62; 
-      background: #132943; color: #E9F2FF;
-    }
-    .settings-row { display: flex; gap: 16px; font-size: 0.85rem; color: #A9B8C9; }
-    .sidebar { width: 180px; display: flex; flex-direction: column; gap: 8px; }
-    .sidebar h3 { margin: 0; font-size: 0.9rem; color: #E9F2FF; text-transform: uppercase; }
-    .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
-    .hist-item { background: #232A34; padding: 6px; border-radius: 1px; border: 1px solid #2D3742; font-size: 0.8rem; text-align: left; cursor: pointer; color: #A9B8C9;}
+    .log-echo { color: var(--color-info); } 
+    .log-rx { color: var(--color-ink-muted); } 
+    .log-okprompt { color: var(--color-accent); } 
+    .log-badprompt { color: var(--color-danger); }
 
-    /* --- CALIBRATION VIEW STYLES --- */
-.calib-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 16px;
-}
-
-.calib-card {
-  background: #00354B;
-  border: 1px solid #b2c4cb;
-  border-radius: 1px;
-  padding: 20px;
-}
-
-.calib-wizard {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.calib-wizard h3 { margin: 0 0 4px 0; font-size: 1rem; color: #E9F2FF; }
-
-.calib-step {
-  display: flex;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 1px;
-  background: #132943;
-  border: 1px solid #b2c4cb;
-  opacity: 0.5;
-  transition: opacity 0.2s, border-color 0.2s;
-}
-
-.calib-step.active {
-  opacity: 1;
-  border-color: #b2c4cb;
-}
-
-.step-num {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #65BBA9;
-  color: #fff;
-  font-weight: bold;
-  font-size: 0.8rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.step-details {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-}
-
-.step-details h4 { margin: 0; font-size: 0.85rem; color: #E9F2FF; }
-.step-details p { margin: 0; font-size: 0.75rem; color: #A9B8C9; }
-
-.calib-main {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.plot-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.plot-header {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.plot-header h3 { margin: 0; font-size: 0.95rem; color: #E9F2FF; }
-
-.canvas-wrapper {
-  background: #132943;
-  border-radius: 1px;
-  border: 1px solid #1F3A62;
-  padding: 10px;
-}
-
-.telemetry-card {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  text-align: center;
-}
-
-.telem-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.telem-label { font-size: 0.7rem; color: #A9B8C9; text-transform: uppercase; }
-.telem-val { font-family: ui-monospace, Consolas, monospace; font-size: 1rem; color: #65BBA9; font-weight: bold; }
-
-.hidden {
-  display: none !important;
-}
-
-#input-deadband {
-  accent-color: #EEA320; /* Or #00ADEF for cyan */
-  cursor: pointer;
-}
-
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <main class="app-shell">
-    
 
+    <!-- HEADER ROW -->
     <div class="header-row">
-      <h1>MLX90396 Web GUI</h1>
-      <button id="btn-connect">Connect USB</button>
+      <h1 style="margin: 0; font-family: var(--font-display); font-size: 1.5rem;">MLX90396 Web UI</h1>
+      <button id="btn-connect" class="ds-button ds-button--primary ds-button--md">Connect USB</button>
     </div>
 
-    <div class="tab-bar">
-      <button class="tab-btn active" data-target="view-joystick">Joystick Demo</button>
-      <button class="tab-btn" data-target="view-terminal">SCPI Terminal</button>
-      <button class="tab-btn" data-target="view-calib">Calibration</button>
-      <button class="tab-btn" data-target="view-memory">NVRAM Memory</button>
-      
-    </div>
-
-<!-- VIEW 4: JOYSTICK CALIBRATION -->
-<div id="view-calib" class="view">
-  <div class="calib-layout">
-    
-    <!-- LEFT PANEL: STEP-BY-STEP WIZARD -->
-    <div class="calib-card calib-wizard">
-      <h3>Calibration Wizard</h3>
-      
-      <!-- Step 1 -->
-      <div class="calib-step active" id="step-1">
-        <div class="step-num">1</div>
-        <div class="step-details">
-          <h4>Set Rest Center</h4>
-          <p>Leave joystick untouched at center rest.</p>
-          <button id="btn-calib-zero" class="btn-secondary" disabled>Capture Zero</button>
-        </div>
-      </div>
-
-      <!-- Step 2 -->
-      <div class="calib-step" id="step-2">
-        <div class="step-num">2</div>
-        <div class="step-details">
-          <h4>Full Boundary Sweep</h4>
-          <p>Rotate stick 360° along outer edge.</p>
-          <button id="btn-calib-sweep" class="btn-secondary" disabled>Start Sweep Recording</button>
-        </div>
-      </div>
-
-      <!-- Step 3 -->
-      <div class="calib-step" id="step-3">
-        <div class="step-num">3</div>
-        <div class="step-details">
-          <h4>Center Deadband</h4>
-          <label for="input-deadband" style="font-size: 0.8rem; color: #A9B8C9;">Filter: <b id="val-deadband" style="color: #EEA320;">3%</b></label>
-          <input type="range" id="input-deadband" min="0" max="15" value="3" style="width: 100%; margin-top: 4px;" />
-        </div>
-      </div>
-
-      <!-- Step 4 -->
-      <div class="calib-step" id="step-4">
-        <div class="step-num">4</div>
-        <div class="step-details">
-          <h4>Apply Calibration</h4>
-          <p>Save computed parameters.</p>
-          <button id="btn-calib-save" class="btn-secondary" disabled>Apply Calibration</button>
-        </div>
+    <!-- MAIN TABS -->
+    <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
+      <div class="ds-tabs__list">
+        <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick Demo</button>
+        <button class="ds-tabs__tab tab-btn" data-target="view-terminal">SCPI Terminal</button>
+        <button class="ds-tabs__tab tab-btn" data-target="view-calib">Calibration</button>
+        <button class="ds-tabs__tab tab-btn" data-target="view-memory">NVRAM Memory</button>
       </div>
     </div>
-
-    <!-- RIGHT PANEL: MOTION RADAR & TELEMETRY -->
-    <div class="calib-main">
-      
-      <!-- Motion Radar Canvas -->
-      <div class="calib-card plot-card">
-        <div class="plot-header">
-          <h3>Magnetic Motion Trace (Bx vs By)</h3>
-          <button id="btn-clear-plot" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;">Clear Plot</button>
-        </div>
-        
-        <div class="canvas-wrapper">
-          <canvas id="calib-canvas" width="300" height="300"></canvas>
-        </div>
-      </div>
-
-      <!-- Live Telemetry Bar -->
-      <div class="calib-card telemetry-card">
-        <div class="telem-item">
-          <span class="telem-label">Offset X</span>
-          <span class="telem-val" id="telem-off-x">0</span>
-        </div>
-        <div class="telem-item">
-          <span class="telem-label">Offset Y</span>
-          <span class="telem-val" id="telem-off-y">0</span>
-        </div>
-        <div class="telem-item">
-          <span class="telem-label">Min/Max Span</span>
-          <span class="telem-val" id="telem-span">0</span>
-        </div>
-        <div class="telem-item">
-          <span class="telem-label">Calib Status</span>
-          <span class="telem-val" id="telem-status" style="color: #EEA320;">Uncalibrated</span>
-        </div>
-      </div>
-
-    </div>
-
-  </div>
-</div>
-
-    <!-- VIEW 3: NVRAM MEMORY SETTINGS -->
-<div id="view-memory" class="view">
-  
-  <!-- Memory Action Panel -->
-  <div class="mem-control-card">
-    <div class="mem-input-group">
-      <div class="mem-field">
-        <label for="nvram-addr">Address (Register)</label>
-        <input type="text" id="nvram-addr" placeholder="0x00 or 0" disabled />
-      </div>
-      <div class="mem-field">
-        <label for="nvram-val">Value (16-bit Word)</label>
-        <input type="text" id="nvram-val" placeholder="0x0000 or 0" disabled />
-      </div>
-      <div class="mem-actions">
-        <button id="btn-nvram-read" class="btn-secondary" disabled>Read</button>
-        <button id="btn-nvram-write" disabled>Write</button>
-      </div>
-    </div>
-
-    <!-- Quick Store/Recall Utilities -->
-    <div class="mem-tools">
-      <button id="btn-nvram-dump" class="btn-secondary" disabled>Dump All Regs</button>
-      <button id="btn-nvram-hs" class="btn-secondary" disabled title="Store RAM to EEPROM/NVRAM">Store (HS)</button>
-      <button id="btn-nvram-hr" class="btn-secondary" disabled title="Recall EEPROM/NVRAM to RAM">Recall (HR)</button>
-    </div>
-  </div>
-
-  <!-- Memory Visualization Table -->
-  <div class="mem-table-wrapper">
-    <div class="mem-table-header">
-      <h3>Register Map (0x00 - 0x3F)</h3>
-      <span id="mem-status-badge" class="mem-badge">Ready</span>
-    </div>
-    <div class="table-scroll-container">
-      <table class="mem-table">
-        <thead>
-          <tr>
-            <th>Reg (Hex)</th>
-            <th>Reg (Dec)</th>
-            <th>Value (Hex)</th>
-            <th>Value (Dec)</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="nvram-table-body">
-          <!-- Rows dynamically generated by app.js -->
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-</div>
 
     <!-- VIEW 1: 3D JOYSTICK -->
     <div id="view-joystick" class="view active">
@@ -568,47 +152,49 @@
       
       <!-- DEMO CONTROLS -->
       <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
-        <button id="btn-start-demo" disabled>Start</button>
-        <button id="btn-stop-demo"  disabled>Stop</button>
-        <button id="btn-toggle-debug" class="btn-secondary">Debug</button>
+        <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
+        <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
+        <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
       </div>
 
-      <!-- NEW: MINI TERMINAL -->
-      <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;" ></div>
+      <!-- MINI TERMINAL -->
+      <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
 
-      <!-- NEW: API TEST BUTTONS -->
-      <div style="margin-top: 20px; text-align: center;">
-        <h4 style="color: #A9B8C9; margin-bottom: 12px; font-size: 0.9rem; text-transform: uppercase;">Device Commands</h4>
-        <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 600px; margin: 0 auto;">
-          <button class="api-btn btn-secondary" data-api="rt" disabled>Reset</button>
-          <button class="api-btn btn-secondary" data-api="hs" disabled>Memory Store</button>
-          <button class="api-btn btn-secondary" data-api="hr" disabled>Memory Recall</button>
-          <button class="api-btn btn-secondary" data-api="ex" disabled>Idle mode</button>
-          <button class="api-btn btn-secondary" data-api="rr" disabled>Read Register</button>
-          <button class="api-btn btn-secondary" data-api="wr" disabled>Write Register</button>
-          <button class="api-btn btn-secondary" data-api="sb" disabled>Burst mode</button>
-          <button class="api-btn btn-secondary" data-api="swoc" disabled>WOC mode</button>
-          <button class="api-btn btn-secondary" data-api="sm" disabled>Single measurement</button>
-          <button class="api-btn btn-secondary" data-api="rm_xyz" disabled>Read memory</button>
-          <button class="api-btn btn-secondary" data-api="rm_sfi" disabled>RM (SFI)</button>
+      <!-- API TEST BUTTONS -->
+      <div style="margin-top: 24px; text-align: center;">
+        <h4 style="color: var(--color-ink-muted); margin-bottom: 12px; font-size: var(--font-size-sm); text-transform: uppercase;">Device Commands</h4>
+        <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 650px; margin: 0 auto;">
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rt" disabled>Reset</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="hs" disabled>Memory Store</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="hr" disabled>Memory Recall</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="ex" disabled>Idle mode</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rr" disabled>Read Register</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="wr" disabled>Write Register</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="sb" disabled>Burst mode</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="swoc" disabled>WOC mode</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="sm" disabled>Single measurement</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rm_xyz" disabled>Read memory</button>
+          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rm_sfi" disabled>RM (SFI)</button>
         </div>
       </div>
     </div>
 
     <!-- VIEW 2: SCPI TERMINAL -->
     <div id="view-terminal" class="view">
-      <div class="terminal-wrapper">
-        <div class="main-terminal">
+      <div style="display: grid; grid-template-columns: 1fr 180px; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
           <div id="log-window" class="log-window"></div>
           
-          <div class="input-row">
-            <input type="text" id="tx-input" placeholder="Type SCPI command..." disabled />
-            <button id="btn-send" disabled>Send</button>
+          <div style="display: flex; gap: 8px;">
+            <div class="ds-field" style="width: 100%;">
+              <input type="text" id="tx-input" class="ds-field__input" placeholder="Type SCPI command..." disabled />
+            </div>
+            <button id="btn-send" class="ds-button ds-button--primary ds-button--md" disabled>Send</button>
           </div>
 
-          <div class="settings-row">
+          <div style="display: flex; gap: 16px; align-items: center; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
             <label>EOL: 
-              <select id="sel-eol">
+              <select id="sel-eol" class="ds-field__input" style="padding: 2px 8px; min-height: 1.8rem; width: auto; display: inline-block;">
                 <option value="\n">LF</option>
                 <option value="\r">CR</option>
                 <option value="\r\n" selected>CRLF</option>
@@ -616,18 +202,172 @@
             </label>
             <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
             <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
-            <button id="btn-clear" class="btn-secondary" style="padding: 4px 12px; margin-left: auto;">Clear</button>
+            <button id="btn-clear" class="ds-button ds-button--secondary ds-button--sm" style="margin-left: auto;">Clear</button>
           </div>
         </div>
 
-        <div class="sidebar">
-          <h3>Quick Cmds</h3>
-          <button class="quick-cmd btn-secondary" data-cmd="*IDN?">IDN?</button>
-          <button class="quick-cmd btn-secondary" data-cmd=":SYST:INFO">INFO</button>
-          <button class="quick-cmd btn-danger" data-cmd="*RST">Reset</button>
-          <hr style="width:100%; border:0; border-top:1px solid #2D3742; margin: 8px 0;">
-          <h3>History</h3>
-          <div id="history-list" class="history-list"></div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">Quick Cmds</h3>
+          <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd="*IDN?">*IDN?</button>
+          <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd=":SYST:INFO">:SYST:INFO</button>
+          <button class="quick-cmd ds-button ds-button--danger ds-button--sm" data-cmd="*RST">*RST</button>
+          <hr class="ds-divider" />
+          <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">History</h3>
+          <div id="history-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto;"></div>
+        </div>
+      </div>
+    </div>
+
+ <!-- VIEW 3: JOYSTICK CALIBRATION -->
+<div id="view-calib" class="view">
+  <div style="display: grid; grid-template-columns: 280px 1fr; gap: 16px;">
+    
+    <!-- LEFT PANEL: CALIBRATION WIZARD -->
+    <div class="ds-card ds-card--pad-md" style="width: 100%;">
+      <h3 style="margin: 0 0 12px 0; font-size: var(--font-size-md);">Calibration Wizard</h3>
+      
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div id="step-1" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border);">
+          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">1. Set Rest Center</h4>
+          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Leave joystick untouched at center rest.</p>
+          <button id="btn-calib-zero" class="ds-button ds-button--secondary ds-button--sm" disabled>Capture Zero</button>
+        </div>
+
+        <div id="step-2" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">2. Boundary Sweep</h4>
+          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Rotate stick 360° along outer edge.</p>
+          <button id="btn-calib-sweep" class="ds-button ds-button--secondary ds-button--sm" disabled>Start Sweep Recording</button>
+        </div>
+
+        <div id="step-3" class="ds-slider" style="width: 100%; padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+          <div class="ds-slider__meta">
+            <span class="ds-slider__label">3. Deadband Filter</span>
+            <span id="val-deadband" class="ds-slider__value">3%</span>
+          </div>
+          <input type="range" id="input-deadband" class="ds-slider__input" min="0" max="15" value="3" />
+        </div>
+
+        <div id="step-4" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">4. Apply Calibration</h4>
+          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Save computed parameters.</p>
+          <button id="btn-calib-save" class="ds-button ds-button--secondary ds-button--sm" disabled>Apply Calibration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: MOTION TRACE & TELEMETRY -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- Motion Radar Canvas (Centered) -->
+      <div class="ds-card ds-card--pad-md" style="width: 100%;">
+        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h3 style="margin: 0; font-size: var(--font-size-sm);">Magnetic Motion Trace (Bx vs By)</h3>
+          <button id="btn-clear-plot" class="ds-button ds-button--secondary ds-button--sm">Clear Plot</button>
+        </div>
+        
+        <!-- Center Flex Wrapper -->
+        <div style="background: var(--color-surface); padding: 16px; border-radius: 3px; border: 1px solid var(--color-border); display: flex; justify-content: center; align-items: center; width: 100%;">
+          <canvas id="calib-canvas" width="300" height="300" style="display: block;"></canvas>
+        </div>
+      </div>
+
+      <!-- Telemetry Status Bar -->
+      <div class="ds-card ds-card--pad-md" style="width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); text-align: center;">
+        <div>
+          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset X</span>
+          <div id="telem-off-x" style="font-weight: bold; color: var(--color-accent);">0</div>
+        </div>
+        <div>
+          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset Y</span>
+          <div id="telem-off-y" style="font-weight: bold; color: var(--color-accent);">0</div>
+        </div>
+        <div>
+          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Span</span>
+          <div id="telem-span" style="font-weight: bold; color: var(--color-accent);">0</div>
+        </div>
+        <div>
+          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Status</span>
+          <div id="telem-status" style="font-weight: bold; color: var(--color-warning);">Uncalibrated</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+    <!-- VIEW 4: NVRAM MEMORY SETTINGS -->
+    <div id="view-memory" class="view">
+      <div class="ds-card ds-card--pad-md" style="width: 100%; margin-bottom: 16px;">
+        <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+          <div class="ds-field">
+            <label class="ds-field__label" for="nvram-addr">Address (Register)</label>
+            <input type="text" id="nvram-addr" class="ds-field__input" placeholder="0x00 or 0" disabled />
+          </div>
+          <div class="ds-field">
+            <label class="ds-field__label" for="nvram-val">Value (16-bit Word)</label>
+            <input type="text" id="nvram-val" class="ds-field__input" placeholder="0x0000 or 0" disabled />
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-nvram-read" class="ds-button ds-button--primary ds-button--md" disabled>Read</button>
+            <button id="btn-nvram-write" class="ds-button ds-button--primary ds-button--md" disabled>Write</button>
+          </div>
+        </div>
+
+        <hr class="ds-divider" />
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-nvram-dump" class="ds-button ds-button--secondary ds-button--sm" disabled>Dump All Regs</button>
+          <button id="btn-nvram-hs" class="ds-button ds-button--secondary ds-button--sm" disabled>Store (HS)</button>
+          <button id="btn-nvram-hr" class="ds-button ds-button--secondary ds-button--sm" disabled>Recall (HR)</button>
+        </div>
+      </div>
+
+      <div class="ds-table-wrap" style="width: 100%;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
+          <h3 style="margin: 0; font-size: var(--font-size-md);">Register Map (0x00 - 0x3F)</h3>
+          <span id="mem-status-badge" class="ds-badge ds-badge--accent">Ready</span>
+        </div>
+        <div style="max-height: 360px; overflow-y: auto;">
+          <table class="ds-table">
+            <thead>
+              <tr>
+                <th class="ds-table__th">Reg (Hex)</th>
+                <th class="ds-table__th">Reg (Dec)</th>
+                <th class="ds-table__th">Value (Hex)</th>
+                <th class="ds-table__th">Value (Dec)</th>
+                <th class="ds-table__th">Status</th>
+              </tr>
+            </thead>
+            <tbody id="nvram-table-body">
+              <!-- Rows dynamically generated by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONNECT WINDOW MODAL -->
+    <div id="connect-modal" class="ds-modal-root hidden">
+      <div class="ds-modal__backdrop"></div>
+      <div class="ds-modal">
+        <div class="ds-modal__header">
+          <h3 class="ds-modal__title">Hardware Connection</h3>
+          <button id="btn-close-modal" class="ds-modal__close">✕</button>
+        </div>
+        <div class="ds-modal__body">
+          <div class="ds-field" style="width: 100%; margin-bottom: 16px;">
+            <label class="ds-field__label" for="sel-conn-type">Connection Bus Type</label>
+            <select id="sel-conn-type" class="ds-field__input">
+              <option value=":SPI">Cable Connection (:SPI)</option>
+              <option value=":SPI2">Header Connection (:SPI2)</option>
+            </select>
+          </div>
+          <p style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
+            Select your physical connection layout before opening the WebSerial COM port.
+          </p>
+        </div>
+        <div class="ds-modal__footer">
+          <button id="btn-modal-connect" class="ds-button ds-button--primary ds-button--full">Open Serial Port</button>
         </div>
       </div>
     </div>
