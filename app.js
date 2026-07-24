@@ -901,3 +901,21 @@ btnModalConnect?.addEventListener('click', async () => {
   connectModal?.classList.add('hidden');
   await connectSerial();
 });
+
+// --- UI Tab Logic ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    // 1. Remove active states from all tabs and views
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.remove('active', 'ds-tabs__tab--active');
+    });
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+
+    // 2. Add active states to the clicked tab and targeted view
+    btn.classList.add('active', 'ds-tabs__tab--active');
+    const targetView = document.getElementById(btn.dataset.target);
+    if (targetView) {
+      targetView.classList.add('active');
+    }
+  });
+});

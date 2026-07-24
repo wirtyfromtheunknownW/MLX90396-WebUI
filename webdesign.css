@@ -2845,6 +2845,12 @@ textarea {
   transform: translateY(-1px);
 }
 
+.tab-btn.ds-tabs__tab--active {
+  background: var(--color-surface-raised);
+  color: var(--color-brand);
+  box-shadow: var(--shadow-sm);
+}
+
 .ds-tabs__tab:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
