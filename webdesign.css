@@ -727,7 +727,7 @@ textarea {
   width: min(100%, 22rem);
   border: 1.5px solid var(--color-border);
   border-radius: 3px;
-  background: var(--color-surface-raised);
+  background: var(--color-canvas);
   box-shadow: var(--shadow-sm);
   color: var(--color-ink);
   font-family: var(--font-body);
@@ -2699,7 +2699,7 @@ textarea {
   overflow: auto;
   border: 1.5px solid var(--color-border);
   border-radius: 3px;
-  background: var(--color-surface-raised);
+  background: var(--color-canvas);
   box-shadow: var(--shadow-sm);
   font-family: var(--font-body);
 }
