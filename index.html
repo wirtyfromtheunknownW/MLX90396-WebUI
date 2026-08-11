@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MLX90396 Web UI</title>
-  
+  <!-- Plotly.js for WebGL 3D Visualization -->
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <!-- 1. External Design System -->
   <link rel="stylesheet" href="webdesign.css" />
 
@@ -134,11 +135,26 @@
     <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
       <div class="ds-tabs__list">
         <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick Demo</button>
+        <button class="ds-tabs__tab tab-btn" data-target="view-3dplot">3D Field Plot</button> <!-- NEW TAB -->
         <button class="ds-tabs__tab tab-btn" data-target="view-terminal">SCPI Terminal</button>
         <button class="ds-tabs__tab tab-btn" data-target="view-calib">Calibration</button>
         <button class="ds-tabs__tab tab-btn" data-target="view-memory">NVRAM Memory</button>
       </div>
     </div>
+
+<!-- VIEW 5: 3D LIVE VECTOR PLOT -->
+<div id="view-3dplot" class="view">
+  <div class="ds-card ds-card--pad-md" style="width: 100%;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <h3 style="margin: 0; font-size: var(--font-size-md);">Live 3D Field Vector ($B_x, B_y, B_z$)</h3>
+      <button id="btn-reset-3d-trail" class="ds-button ds-button--secondary ds-button--sm">Reset Trail</button>
+    </div>
+    
+    <div style="background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); padding: 8px;">
+      <div id="plot-3d-container" style="width: 100%; height: 460px;"></div>
+    </div>
+  </div>
+</div>
 
     <!-- VIEW 1: 3D JOYSTICK -->
     <div id="view-joystick" class="view active">

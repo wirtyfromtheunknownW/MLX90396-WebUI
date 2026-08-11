@@ -443,12 +443,26 @@ async function runJoystickDemo() {
   isDemoRunning = true;
 
   if (isConnected && mlxDevice) {
-    const prefix = getSpiPrefix();
+    const prefix = getSpiPrefix(); // e.g., ":SPI1" or ":SPI2"
     try {
       appendLog(`[SYSTEM] Initializing Hardware on ${prefix}...\n`, 'log-okprompt');
-      await scpiQuery(`${prefix}:Init 0`);
-      await scpiQuery(":CON:CS1:GPIO:INIT:OUT 0");
-      await scpiQuery(":SPI:BUFfer 1,1,1,1,0"); 
+      scpiQuery(`:I2C:Init`);
+      scpiQuery(`:I2C:Exchange 0x13,1,0xF0`);
+      await new Promise(r => setTimeout(r, 200));
+
+
+      // Robust SPI bus matching (handles both "SPI2" and ":SPI2")
+      if (prefix.includes('SPI1')) {
+        await scpiQuery(`${prefix}:Init 0`);
+        await scpiQuery(":CON:CS1:GPIO:INIT:OUT 0");
+        await scpiQuery(`${prefix}:BUFfer 1,1,1,1,0`);
+      } else if (prefix.includes('SPI2')) {
+        await scpiQuery(`${prefix}:Init 0`);
+        await scpiQuery(`${prefix}:SET:CS0 0`);
+        await scpiQuery(":A3:GPIO:INIT:OUT 0");
+      }
+
+      // Power Cycle Sensor VDD
       await scpiQuery(":VDD:OFF");
       await new Promise(r => setTimeout(r, 150)); 
       await scpiQuery(":VDD:3V3");
@@ -461,18 +475,21 @@ async function runJoystickDemo() {
           await mlxDevice.sm(0x3E); 
           await new Promise(r => setTimeout(r, 10)); 
           
-          // Read Joystick coordinates
+          // Read Joystick coordinates (X, Y, Z)
           const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
           
           if (result && typeof result.x0 === 'number' && !isNaN(result.x0)) {
             const cal = processCalibratedCoordinates(result.x0, result.y0);
             
-            // Render Joystick UI
+            // 1. Render 2D Joystick UI
             updateJoystickUI(cal.x / 20, cal.y / 20); 
+
+            // 2. Render 3D Field Vector Plot (Bx, By, Bz)
+            update3DVectorPlot(result.x0, result.y0, result.z0);
           }
 
           if (result && result.error) {
-            appendLog(`[SPI WARN] CRC Mismatch (Raw X: ${result.x0}, Y: ${result.y0})\n`, 'log-badprompt');
+            appendLog(`[SPI WARN] CRC Mismatch (Raw X: ${result.x0}, Y: ${result.y0}, Z: ${result.z0})\n`, 'log-badprompt');
           }
 
           await new Promise(r => setTimeout(r, 30)); 
@@ -495,7 +512,14 @@ async function runJoystickDemo() {
       angle += 0.12; 
       const emulatedX = (Math.cos(angle) * 35) + (Math.sin(angle * 0.5) * 12);
       const emulatedY = (Math.sin(angle) * 35) + (Math.cos(angle * 1.5) * 12);
+      const emulatedZ = Math.sin(angle * 2) * 20;
+
+      // 1. Update 2D Joystick
       updateJoystickUI(emulatedX, emulatedY);
+
+      // 2. Update 3D Vector Plot
+      update3DVectorPlot(emulatedX * 15, emulatedY * 15, emulatedZ * 15);
+
       await new Promise(r => setTimeout(r, 33)); 
     }
   }
@@ -916,6 +940,116 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     const targetView = document.getElementById(btn.dataset.target);
     if (targetView) {
       targetView.classList.add('active');
+    }
+  });
+});
+
+// --- 3D Vector Plot Setup ---
+const MAX_TRAIL_POINTS = 60;
+const history3D = { x: [], y: [], z: [] };
+
+const layout3D = {
+  autosize: true,
+  margin: { l: 0, r: 0, b: 0, t: 0 },
+  paper_bgcolor: 'rgba(0,0,0,0)',
+  plot_bgcolor: 'rgba(0,0,0,0)',
+  scene: {
+    aspectmode: 'cube',
+    xaxis: { title: 'Bx (X)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    yaxis: { title: 'By (Y)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    zaxis: { title: 'Bz (Z)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    bgcolor: 'rgba(0,0,0,0)'
+  }
+};
+
+// 1. Fixed Rest Origin Ball (0,0,0)
+const traceOrigin = {
+  x: [0], y: [0], z: [0],
+  mode: 'markers',
+  type: 'scatter3d',
+  marker: { size: 6, color: '#A9B8C9', opacity: 0.5 },
+  name: 'Rest Center (0,0,0)'
+};
+
+// 2. Trailing Line Path
+const traceTrail = {
+  x: [], y: [], z: [],
+  mode: 'lines',
+  type: 'scatter3d',
+  line: { color: '#8fc1cc', width: 4 },
+  name: 'Motion Trail'
+};
+
+// 3. Live Active Ball
+const traceLiveBall = {
+  x: [0], y: [0], z: [0],
+  mode: 'markers',
+  type: 'scatter3d',
+  marker: { size: 10, color: '#65BBA9', symbol: 'circle' },
+  name: 'Live Vector'
+};
+
+// Initialize 3D Plotly Canvas
+if (document.getElementById('plot-3d-container') && window.Plotly) {
+  Plotly.newPlot('plot-3d-container', [traceOrigin, traceTrail, traceLiveBall], layout3D);
+}
+
+// Function to push new coordinates
+export function update3DVectorPlot(rawX, rawY, rawZ) {
+  if (!window.Plotly || !document.getElementById('plot-3d-container')) return;
+
+  const rx = typeof rawX === 'number' && !isNaN(rawX) ? rawX : 0;
+  const ry = typeof rawY === 'number' && !isNaN(rawY) ? rawY : 0;
+  const rz = typeof rawZ === 'number' && !isNaN(rawZ) ? rawZ : 0;
+
+  // Subtract calibrated center offsets
+  const x = rx - (calibState?.offsetX || 0);
+  const y = ry - (calibState?.offsetY || 0);
+  const z = rz;
+
+  history3D.x.push(x);
+  history3D.y.push(y);
+  history3D.z.push(z);
+
+  if (history3D.x.length > MAX_TRAIL_POINTS) {
+    history3D.x.shift();
+    history3D.y.shift();
+    history3D.z.shift();
+  }
+
+  // Fast WebGL update
+  Plotly.react('plot-3d-container', [
+    traceOrigin,
+    { ...traceTrail, x: history3D.x, y: history3D.y, z: history3D.z },
+    { ...traceLiveBall, x: [x], y: [y], z: [z] }
+  ], layout3D);
+}
+
+// Reset Trail Button
+document.getElementById('btn-reset-3d-trail')?.addEventListener('click', () => {
+  history3D.x = []; history3D.y = []; history3D.z = [];
+  if (window.Plotly) {
+    Plotly.react('plot-3d-container', [
+      traceOrigin,
+      { ...traceTrail, x: [], y: [], z: [] },
+      { ...traceLiveBall, x: [0], y: [0], z: [0] }
+    ], layout3D);
+  }
+});
+
+// Update tab switching listener to auto-resize 3D Canvas when tab becomes active
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'ds-tabs__tab--active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active', 'ds-tabs__tab--active');
+    
+    const target = document.getElementById(btn.dataset.target);
+    if (target) target.classList.add('active');
+
+    // Trigger Plotly Resize when clicking the 3D tab
+    if (btn.dataset.target === 'view-3dplot' && window.Plotly) {
+      Plotly.Plots.resize('plot-3d-container');
     }
   });
 });
