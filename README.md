@@ -14,19 +14,12 @@ This application runs directly in Chromium-based browsers without requiring back
 * **Emulation Mode:** Includes a trigonometric wave simulator for UI testing without physical hardware attached.
 * **Toggleable Debug Terminal:** Integrated collapsible debug output window on the main joystick view.
 
-### 2. 4-Step Magnetic Calibration Wizard
-* **Step 1 — Zero Offset Capture:** Samples magnetic baseline flux ($B_x, B_y$) at center rest to eliminate mechanical mounting tilt.
-* **Step 2 — Range Sweep Recording:** Dynamically records a 360° rotational sweep to find axis spans ($X_{\min}/X_{\max}, Y_{\min}/Y_{\max}$) and normalize non-circular magnetic fields.
-* **Step 3 — Center Deadband Filter:** Range slider (0–15%) to snap resting field jitter to zero.
-* **Step 4 — Profile Commit:** Applies normalized calibration factors across all joystick coordinates.
-* **Polar Radar Motion Canvas:** Live $B_x$ vs. $B_y$ trace canvas with concentric target rings and glowing mint-green vector path tracking.
-
-### 3. NVRAM / Register Map Editor (0x00 – 0x3F)
+### 2. NVRAM / Register Map Editor (0x00 – 0x3F)
 * **Full Register Scan (0x00 – 0x3F):** Read or write individual 16-bit words or perform a full 64-register memory dump.
 * **Interactive Data Table:** Synchronized view showing register addresses, raw hexadecimal values, decimal values, and transfer statuses.
 * **Hardware EEPROM Operations:** Dedicated controls for **Memory Store (`HS`)** (RAM $\rightarrow$ EEPROM) and **Memory Recall (`HR`)** (EEPROM $\rightarrow$ RAM).
 
-### 4. SCPI Terminal & Serial Engine
+### 3. SCPI Terminal & Serial Engine
 * **Command Queue (Mutex):** Prevents packet collisions and stream desynchronization by wrapping requests in individual 1.5-second timeout promises.
 * **Tokenizer Stream Parser:** Parses token responses like `(OK)>`, `(ERR)>`, `(E2BIG)>`, and `(ERANGE)>` in real-time[cite: 1].
 * **Dual Console Logging:** High-performance log buffer with `requestAnimationFrame` DOM batching and automatic memory truncation to prevent browser slowdowns.
