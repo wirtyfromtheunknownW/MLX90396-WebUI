@@ -1,6 +1,8 @@
 import { MLX90396_API } from './mlx_api.js';
+import { Arduino_API } from './arduino_api.js';
+import { initSfiDemo, resizeSfiCanvases } from './sfi_demo.js';
 
-// --- DOM Elements ---
+// --- DOM Elements (Declared first to avoid TDZ ReferenceErrors) ---
 const btnConnect = document.getElementById('btn-connect');
 const btnClear = document.getElementById('btn-clear');
 const btnSend = document.getElementById('btn-send');
@@ -14,13 +16,22 @@ const chkAutoScroll = document.getElementById('chk-autoscroll');
 const btnStartDemo = document.getElementById('btn-start-demo');
 const btnStopDemo = document.getElementById('btn-stop-demo');
 const historyList = document.getElementById('history-list');
-const apiTestButtons = document.querySelectorAll('.api-btn'); 
 
-const queryQueue = [];
-let isProcessingQueue = false;
-let rxLineBuffer = '';
+// Modal Elements
+const selDriverType = document.getElementById('sel-driver-type');
+const wrapConnType = document.getElementById('wrap-conn-type');
+const selConnType = document.getElementById('sel-conn-type');
+const selBaudRate = document.getElementById('sel-baud-rate');
+const connectModal = document.getElementById('connect-modal');
+const btnModalConnect = document.getElementById('btn-modal-connect');
+const btnCloseModal = document.getElementById('btn-close-modal');
 
-// FORCE DEFAULT EOL TO LF (\n)
+// 2D Magnet & UI Elements
+const magnetDisk = document.getElementById('magnet-disk');
+const btnZeroMagnet = document.getElementById('btn-zero-magnet');
+const joystickBase = document.getElementById('joystick-base');
+const joystickStick = document.getElementById('joystick-stick');
+
 if (selEol) selEol.value = '\\n';
 
 // --- State Variables ---
@@ -28,31 +39,133 @@ let port = null, reader = null, writer = null;
 let isConnected = false, isReading = false, isDemoRunning = false;
 let textDecoder, textEncoder;
 let readableStreamClosed, writableStreamClosed; 
-let mlxDevice = null;
+
+let activeDevice = null;
+let currentDriverType = 'scpi'; 
+
+let scpiLock = Promise.resolve();
+let scpiWaiter = null; 
 
 const history = [];
 let historyIndex = -1;
 let draftBeforeNav = '';
 
-// --- UI Tab Logic ---
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.target)?.classList.add('active');
-  });
-});
+const magnetOffsets = { x: 0, y: 0 };
+const latestRawMagnet = { x: 0, y: 0 };
 
-// --- Joystick Model Setup ---
-const joystickBase = document.getElementById('joystick-base');
-const joystickStick = document.getElementById('joystick-stick');
 const leds = [];
 const TOTAL_LEDS = 28;
 const ANGLE_STEP = 360 / TOTAL_LEDS;
 
+// --- Initialize on Startup ---
+window.addEventListener('DOMContentLoaded', () => {
+  initSfiDemo();
+  initJoystickLEDs();
+  initDeviceCommandButtons();
+  initNvramControls();
+});
+
+// --- Helper: SPI Bus Prefix ---
+function getSpiPrefix() {
+  return selConnType ? selConnType.value : ':SPI';
+}
+
+// --- Top-Level Demo Navigation (SFI vs JWT) ---
+document.querySelectorAll('.demo-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.demo-tab-btn').forEach(b => b.classList.remove('active', 'ds-tabs__tab--active'));
+    document.querySelectorAll('.demo-view').forEach(v => v.classList.remove('active'));
+
+    btn.classList.add('active', 'ds-tabs__tab--active');
+    const target = document.getElementById(btn.dataset.target);
+    if (target) target.classList.add('active');
+
+    if (btn.dataset.target === 'demo-sfi') {
+      setTimeout(resizeSfiCanvases, 50);
+    } else if (btn.dataset.target === 'demo-jwt' && window.Plotly && document.getElementById('view-3dplot')?.classList.contains('active')) {
+      Plotly.Plots.resize('plot-3d-container');
+    }
+  });
+});
+
+// --- Sub-Tab Routing (JWT View) ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'ds-tabs__tab--active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+
+    btn.classList.add('active', 'ds-tabs__tab--active');
+    const targetView = document.getElementById(btn.dataset.target);
+    if (targetView) targetView.classList.add('active');
+
+    if (btn.dataset.target === 'view-3dplot' && window.Plotly) {
+      Plotly.Plots.resize('plot-3d-container');
+    }
+  });
+});
+
+// --- Dynamic Device Command Buttons ---
+function initDeviceCommandButtons() {
+  const container = document.getElementById('api-test-buttons');
+  if (!container) return;
+
+  const commands = [
+    { label: 'RT (Reset)', action: async () => { const res = await activeDevice.rt(); appendLog(`[API RT] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
+    { label: 'HS (Store NVRAM)', action: async () => { const res = await activeDevice.hs(); appendLog(`[API HS] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
+    { label: 'HR (Recall NVRAM)', action: async () => { const res = await activeDevice.hr(); appendLog(`[API HR] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
+    { label: 'SM (Start Meas)', action: async () => { const res = await activeDevice.sm(0xFC000); appendLog(`[API SM] Mask 0xFC000 Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
+    { label: 'RM (Read P0-1)', action: async () => { const res = await activeDevice.rm(false, 0xFC000); appendLog(`[API RM P0-1] ${JSON.stringify(res)}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
+    { label: 'RM (Read P2-3)', action: async () => { const res = await activeDevice.rm(false, 0x03F00); appendLog(`[API RM P2-3] ${JSON.stringify(res)}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
+    { label: 'EX (Exit Mode)', action: async () => { const res = await activeDevice.ex(0); appendLog(`[API EX] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
+    { label: 'RR Reg 0x00', action: async () => { const res = await activeDevice.rr(0x00); appendLog(`[API RR 0x00] Data: 0x${res.data?.toString(16).padStart(4, '0')}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
+    { label: 'RR Reg 0x02', action: async () => { const res = await activeDevice.rr(0x02); appendLog(`[API RR 0x02] Data: 0x${res.data?.toString(16).padStart(4, '0')}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } }
+  ];
+
+  container.innerHTML = '';
+  commands.forEach(cmd => {
+    const btn = document.createElement('button');
+    btn.className = 'ds-button ds-button--secondary ds-button--sm api-btn';
+    btn.textContent = cmd.label;
+    btn.disabled = !isConnected || currentDriverType === 'arduino';
+    btn.addEventListener('click', async () => {
+      if (!activeDevice || currentDriverType !== 'scpi') return;
+      try {
+        console.log(`[API EXEC] Running command: ${cmd.label}`);
+        await cmd.action();
+      } catch (err) {
+        console.error(`[API ERROR] ${cmd.label}:`, err);
+        appendLog(`[API ERROR]: ${err.message}\n`, 'log-badprompt');
+      }
+    });
+    container.appendChild(btn);
+  });
+}
+
+// --- 2D Magnet Position & UI ---
+btnZeroMagnet?.addEventListener('click', () => {
+  magnetOffsets.x = latestRawMagnet.x;
+  magnetOffsets.y = latestRawMagnet.y;
+  appendLog(`[MAGNET] Zero Captured: Offset X=${magnetOffsets.x.toFixed(2)} mm, Y=${magnetOffsets.y.toFixed(2)} mm\n`, 'log-okprompt');
+});
+
+function updateMagnetUI(posX_mm, posY_mm, angleDeg) {
+  if (!magnetDisk) return;
+  const safeX = typeof posX_mm === 'number' && !isNaN(posX_mm) ? posX_mm : 0;
+  const safeY = typeof posY_mm === 'number' && !isNaN(posY_mm) ? posY_mm : 0;
+  const safeAngle = typeof angleDeg === 'number' && !isNaN(angleDeg) ? angleDeg : 0;
+
+  const PIXELS_PER_MM = 30; 
+  const maxSquareExtent = 75; // +-2.5 mm travel limit
+
+  let transX = Math.max(-maxSquareExtent, Math.min(maxSquareExtent, safeX * PIXELS_PER_MM));
+  let transY = Math.max(-maxSquareExtent, Math.min(maxSquareExtent, -safeY * PIXELS_PER_MM));
+
+  magnetDisk.style.transform = `translate3d(${transX}px, ${transY}px, 0px) rotate(${safeAngle}deg)`;
+}
+
+// --- 3D Joystick UI ---
 function initJoystickLEDs() {
-  if (!joystickBase) return;
+  if (!joystickBase || leds.length > 0) return;
   for (let i = 0; i < TOTAL_LEDS; i++) {
     const led = document.createElement('div');
     led.className = 'joystick__led';
@@ -61,11 +174,9 @@ function initJoystickLEDs() {
     leds.push(led);
   }
 }
-initJoystickLEDs();
 
 function updateJoystickUI(x, y) {
   if (!joystickStick) return;
-  
   const safeX = typeof x === 'number' && !isNaN(x) ? x : 0;
   const safeY = typeof y === 'number' && !isNaN(y) ? y : 0;
   
@@ -99,7 +210,7 @@ function updateJoystickUI(x, y) {
   }
 }
 
-// --- High-Performance Dual Logging System ---
+// --- Console & Terminal Logging ---
 const LOG_MAX_CHARS = 100000;
 const LOG_TRIM_TO = 80000;
 let logTotalChars = 0;
@@ -168,93 +279,87 @@ function flushLog() {
 
 function appendLog(text, cls) {
   if (!text) return;
+  console.log(`%c[SERIAL ${cls || 'INFO'}] ${text.trim()}`, 'color: #38bdf8');
   logQueue.push({ text, cls });
   scheduleLogFlush();
 }
 
-// --- SCPI RX PARSER ---
+// --- Serial RX Router ---
+let rxBuffer = '';
+let lastDataLine = '';
+
 function processRx(text) {
-  rxLineBuffer += text;
-
-  while (true) {
-    const okIdx = rxLineBuffer.indexOf('(OK)>');
-    const errIdx = rxLineBuffer.search(/\(ERR\)>|\(E2BIG\)>|\(ERANGE\)>/);
-
-    if (okIdx !== -1 && (errIdx === -1 || okIdx < errIdx)) {
-      const fullMatch = rxLineBuffer.substring(0, okIdx + 5);
-      rxLineBuffer = rxLineBuffer.substring(okIdx + 5);
-      handleDeviceResponse(fullMatch, false);
-    } else if (errIdx !== -1) {
-      const endIdx = rxLineBuffer.indexOf('>', errIdx);
-      if (endIdx !== -1) {
-        const fullMatch = rxLineBuffer.substring(0, endIdx + 1);
-        rxLineBuffer = rxLineBuffer.substring(endIdx + 1);
-        handleDeviceResponse(fullMatch, true);
-      } else {
-        break;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    if (char === '\n' || char === '\r') {
+      if (rxBuffer.trim() !== '') {
+        const line = rxBuffer.trim();
+        console.log('[RX LINE]', line);
+        if (currentDriverType === 'arduino' && activeDevice) {
+          activeDevice.processLine(line);
+        } else {
+          handlePrompt(line);
+        }
       }
+      rxBuffer = ''; 
     } else {
-      const nlIdx = rxLineBuffer.search(/[\r\n]/);
-      if (nlIdx !== -1) {
-        const line = rxLineBuffer.substring(0, nlIdx).trim();
-        if (line) appendLog(line + '\n', 'log-rx');
-        rxLineBuffer = rxLineBuffer.substring(nlIdx + 1);
-      } else {
-        break;
+      rxBuffer += char;
+      if (currentDriverType === 'scpi') {
+        if (rxBuffer.endsWith('(OK)>') || rxBuffer.endsWith('(ERR)>') || rxBuffer.endsWith('(E2BIG)>') || rxBuffer.endsWith('(ERANGE)>')) {
+          const line = rxBuffer.trim();
+          console.log('[RX PROMPT]', line);
+          handlePrompt(line);
+          rxBuffer = '';
+        }
       }
     }
   }
 }
 
-function handleDeviceResponse(rawResponse, isError) {
-  const trimmed = rawResponse.trim();
-  if (!trimmed) return;
-
-  appendLog(trimmed + '\n', isError ? 'log-badprompt' : 'log-okprompt');
-
-  if (queryQueue.length > 0 && isProcessingQueue) {
-    const current = queryQueue[0];
-    clearTimeout(current.timer);
-
-    if (isError) {
-      queryQueue.shift();
-      isProcessingQueue = false;
-      current.reject(new Error(trimmed));
-    } else {
-      let cleanData = trimmed.replace('(OK)>', '').trim();
-      if (cleanData.startsWith(current.cmd)) {
-        cleanData = cleanData.substring(current.cmd.length).trim();
-      }
-
-      queryQueue.shift();
-      isProcessingQueue = false;
-      current.resolve(cleanData);
+function handlePrompt(line) {
+  if (line.endsWith('(OK)>')) {
+    let dataPart = line.slice(0, -5).trim();
+    if (dataPart.includes(':SPI') || dataPart.includes(',') || dataPart.includes('0x')) {
+      lastDataLine = dataPart;
     }
-
-    setTimeout(processQueryQueue, 0);
+    if (dataPart) appendLog(dataPart + '\n', 'log-rx');
+    appendLog('(OK)>\n', 'log-okprompt');
+    
+    if (scpiWaiter) {
+      clearTimeout(scpiWaiter.timeoutId);
+      scpiWaiter.resolve(lastDataLine);
+      const rel = scpiWaiter.release;
+      scpiWaiter = null;
+      if (rel) rel();
+    }
+    lastDataLine = '';
+  } else if (line.endsWith('(ERR)>') || line.endsWith('(E2BIG)>') || line.endsWith('(ERANGE)>')) {
+    appendLog(line + '\n', 'log-badprompt');
+    if (scpiWaiter) {
+      clearTimeout(scpiWaiter.timeoutId);
+      scpiWaiter.reject(new Error("Hardware Error: " + line));
+      const rel = scpiWaiter.release;
+      scpiWaiter = null;
+      if (rel) rel();
+    }
+    lastDataLine = '';
+  } else {
+    appendLog(line + '\n', 'log-rx');
+    if (line.includes(',') && !line.startsWith(':') && !line.startsWith('*')) {
+      lastDataLine = line;
+    }
   }
 }
 
+// --- SCPI Queries ---
 function getEol() {
   if (!selEol) return '\n';
   const v = selEol.value;
   if (v === '\\n') return '\n';
   if (v === '\\r') return '\r';
   if (v === '\\r\\n') return '\r\n';
-  return '';
-}
-
-function updateHistoryUI() {
-  if (!historyList) return;
-  historyList.innerHTML = '';
-  const displayLimit = Math.min(history.length, 10);
-  for (let i = 0; i < displayLimit; i++) {
-    const btn = document.createElement('button');
-    btn.className = 'hist-item';
-    btn.textContent = history[i];
-    btn.onclick = () => sendCommand(history[i]);
-    historyList.appendChild(btn);
-  }
+  return '\n';
 }
 
 async function sendCommand(cmd, echo = true, recordHistory = true) {
@@ -264,6 +369,7 @@ async function sendCommand(cmd, echo = true, recordHistory = true) {
 
   const text = raw + getEol();
   try {
+    console.log('[TX SEND]', raw);
     await writer.write(text);
     if (echo && chkEcho && chkEcho.checked) appendLog(text, 'log-echo');
     
@@ -277,85 +383,75 @@ async function sendCommand(cmd, echo = true, recordHistory = true) {
     historyIndex = -1;
     draftBeforeNav = '';
   } catch (err) {
+    console.error('[TX ERROR]', err);
     appendLog(`[TX ERROR]: ${err.message}\n`, 'log-badprompt');
   }
 }
 
 async function scpiQuery(cmd) {
+  let releaseLock;
+  const nextLock = new Promise(resolve => { releaseLock = resolve; });
+  
+  await scpiLock;
+  scpiLock = nextLock;
+
   return new Promise((resolve, reject) => {
-    queryQueue.push({ 
-      cmd: cmd.trim(), 
-      resolve, 
-      reject, 
-      timer: null 
-    });
-    processQueryQueue();
+    lastDataLine = ''; 
+    scpiWaiter = { resolve, reject, release: releaseLock };
+    sendCommand(cmd, true, false); 
+    
+    scpiWaiter.timeoutId = setTimeout(() => {
+      if (scpiWaiter) {
+        scpiWaiter.reject(new Error("Device Timeout on command: " + cmd));
+        scpiWaiter = null;
+        releaseLock(); 
+      }
+    }, 2500); 
   });
 }
 
-async function processQueryQueue() {
-  if (isProcessingQueue || queryQueue.length === 0) return;
-
-  isProcessingQueue = true;
-  const current = queryQueue[0];
-
-  current.timer = setTimeout(() => {
-    if (queryQueue[0] === current) {
-      queryQueue.shift();
-      isProcessingQueue = false;
-      current.reject(new Error("Device Timeout on command: " + current.cmd));
-      processQueryQueue();
-    }
-  }, 1500);
-
-  try {
-    await sendCommand(current.cmd, true, false);
-  } catch (err) {
-    clearTimeout(current.timer);
-    queryQueue.shift();
-    isProcessingQueue = false;
-    current.reject(err);
-    processQueryQueue();
-  }
+function updateHistoryUI() {
+  if (!historyList) return;
+  historyList.innerHTML = '';
+  history.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'ds-button ds-button--secondary ds-button--sm';
+    btn.textContent = item;
+    btn.style.textAlign = 'left';
+    btn.addEventListener('click', () => {
+      if (txInput) txInput.value = item;
+    });
+    historyList.appendChild(btn);
+  });
 }
 
-// --- Unified Connection UI Manager ---
+// --- Connection Manager ---
 function setUIConnected(connected) {
   isConnected = connected;
   btnConnect.textContent = connected ? 'Disconnect' : 'Connect USB';
   if (connected) btnConnect.classList.add('btn-danger');
   else btnConnect.classList.remove('btn-danger');
   
-  if (txInput) txInput.disabled = !connected;
-  if (btnSend) btnSend.disabled = !connected;
+  if (txInput) txInput.disabled = !connected || currentDriverType === 'arduino';
+  if (btnSend) btnSend.disabled = !connected || currentDriverType === 'arduino';
+  if (btnStartDemo) btnStartDemo.disabled = !connected;
   
-  apiTestButtons.forEach(btn => btn.disabled = !connected);
+  initDeviceCommandButtons();
 
-  // NVRAM Controls
-  const nvramAddr = document.getElementById('nvram-addr');
-  if (nvramAddr) {
-    nvramAddr.disabled = !connected;
-    document.getElementById('nvram-val').disabled = !connected;
-    document.getElementById('btn-nvram-read').disabled = !connected;
-    document.getElementById('btn-nvram-write').disabled = !connected;
-    document.getElementById('btn-nvram-dump').disabled = !connected;
-    document.getElementById('btn-nvram-hs').disabled = !connected;
-    document.getElementById('btn-nvram-hr').disabled = !connected;
-  }
-
-  // Calibration Controls
-  const btnCalibZero = document.getElementById('btn-calib-zero');
-  if (btnCalibZero) {
-    btnCalibZero.disabled = !connected;
-    document.getElementById('btn-calib-sweep').disabled = !connected;
-    document.getElementById('btn-calib-save').disabled = !connected;
-  }
+  const isScpi = connected && currentDriverType === 'scpi';
+  ['nvram-addr', 'nvram-val', 'btn-nvram-read', 'btn-nvram-write', 'btn-nvram-dump', 'btn-nvram-hs', 'btn-nvram-hr'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !isScpi;
+  });
 }
 
 async function connectSerial() {
   try {
+    currentDriverType = selDriverType ? selDriverType.value : 'scpi';
+    const baudRate = selBaudRate ? parseInt(selBaudRate.value, 10) : 115200;
+
     port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
+    await port.open({ baudRate });
 
     textDecoder = new TextDecoderStream();
     textEncoder = new TextEncoderStream();
@@ -364,13 +460,17 @@ async function connectSerial() {
 
     reader = textDecoder.readable.getReader();
     writer = textEncoder.writable.getWriter();
-
     isReading = true;
-    
-    mlxDevice = new MLX90396_API(scpiQuery, getSpiPrefix);
+
+    if (currentDriverType === 'arduino') {
+      activeDevice = new Arduino_API();
+      appendLog(`[SYSTEM] Connected with Direct Arduino API at ${baudRate} baud.\n`, 'log-okprompt');
+    } else {
+      activeDevice = new MLX90396_API(scpiQuery, getSpiPrefix);
+      appendLog(`[SYSTEM] Connected with MLX90396 SCPI API on bus ${getSpiPrefix()} at ${baudRate} baud.\n`, 'log-okprompt');
+    }
+
     setUIConnected(true);
-    
-    appendLog(`[SYSTEM] Port opened with bus ${getSpiPrefix()}.\n`, 'log-okprompt');
 
     (async () => {
       try {
@@ -400,102 +500,98 @@ async function disconnectSerial() {
   if (writableStreamClosed) await writableStreamClosed.catch(() => {});
   if (port) await port.close();
   
-  port = null; reader = null; writer = null;
+  port = null; reader = null; writer = null; activeDevice = null;
   setUIConnected(false);
   updateJoystickUI(0, 0);
+  updateMagnetUI(0, 0);
   appendLog('[SYSTEM] Port closed.\n', 'log-badprompt');
 }
 
-// --- API Test Commands ---
-async function testApiCommand(cmdType) {
-  if (!mlxDevice) return;
-  appendLog(`[TEST] Executing API Command: ${cmdType.toUpperCase()}...\n`, 'log-okprompt');
-  
-  try {
-    let res;
-    switch (cmdType) {
-      case 'rt': res = await mlxDevice.rt(); break;
-      case 'hs': res = await mlxDevice.hs(); break;
-      case 'hr': res = await mlxDevice.hr(); break;
-      case 'ex': res = await mlxDevice.ex(1); break;
-      case 'rr': res = await mlxDevice.rr(0x00); break;
-      case 'wr': res = await mlxDevice.wr(0x00, 0x0000); break;
-      case 'sb': res = await mlxDevice.sb(0x3E); break;
-      case 'swoc': res = await mlxDevice.swoc(0x3E); break;
-      case 'sm': res = await mlxDevice.sm(0x3E); break;
-      case 'rm_xyz': res = await mlxDevice.rm_joystick_xyz(false, 0x3E); break;
-      case 'rm_sfi': res = await mlxDevice.rm_sfi_joystick(false, 0xAC); break;
-    }
-    appendLog(`[TEST RESULT] ${JSON.stringify(res)}\n`, 'log-rx');
-  } catch (err) {
-    appendLog(`[TEST FAILED] ${err.message}\n`, 'log-badprompt');
-  }
-}
-
-apiTestButtons.forEach(btn => {
-  btn.addEventListener('click', () => testApiCommand(btn.dataset.api));
-});
-
-// --- Joystick Demo Loop (Hardware OR Standalone Emulation) ---
+// --- Live Unified Demo Loop ---
 async function runJoystickDemo() {
   btnStartDemo.disabled = true;
   btnStopDemo.disabled = false;
   isDemoRunning = true;
 
-  if (isConnected && mlxDevice) {
-    const prefix = getSpiPrefix(); // e.g., ":SPI1" or ":SPI2"
+  if (isConnected && activeDevice) {
     try {
-      appendLog(`[SYSTEM] Initializing Hardware on ${prefix}...\n`, 'log-okprompt');
-      scpiQuery(`:I2C:Init`);
-      scpiQuery(`:I2C:Exchange 0x13,1,0xF0`);
-      await new Promise(r => setTimeout(r, 200));
+      appendLog('[SYSTEM] Starting Live Demo...\n', 'log-okprompt');
 
+      if (currentDriverType === 'scpi') {
+        const prefix = getSpiPrefix(); 
+        await new Promise(r => setTimeout(r, 200));
 
-      // Robust SPI bus matching (handles both "SPI2" and ":SPI2")
-      if (prefix.includes('SPI1')) {
-        await scpiQuery(`${prefix}:Init 0`);
-        await scpiQuery(":CON:CS1:GPIO:INIT:OUT 0");
-        await scpiQuery(`${prefix}:BUFfer 1,1,1,1,0`);
-      } else if (prefix.includes('SPI2')) {
-        await scpiQuery(`${prefix}:Init 0`);
-        await scpiQuery(`${prefix}:SET:CS0 0`);
-        await scpiQuery(":A3:GPIO:INIT:OUT 0");
+        if (prefix.includes('SPI2') || prefix === ':SPI2') {
+          console.log('[INIT] Configuring Melexis IO SPI2 Header Connection...');
+          await scpiQuery(`${prefix}:Init 0`);
+          await scpiQuery(`${prefix}:SET:CS0 0`);
+          await scpiQuery(":A3:GPIO:INIT:OUT 0");
+        } else {
+          console.log('[INIT] Configuring Melexis IO Cable Connection...');
+          await scpiQuery(`${prefix}:Init 0`);
+          await scpiQuery(":CON:CS1:GPIO:INIT:OUT 0");
+          await scpiQuery(`${prefix}:BUFfer 1,1,1,1,0`);
+          await scpiQuery(":VDD:3V3");
+        }
       }
 
-      // Power Cycle Sensor VDD
-      await scpiQuery(":VDD:OFF");
-      await new Promise(r => setTimeout(r, 150)); 
-      await scpiQuery(":VDD:3V3");
-      await new Promise(r => setTimeout(r, 150)); 
-      appendLog('[SYSTEM] Hardware Ready. Starting Stream...\n', 'log-okprompt');
+      const K_ROT_X = 0.10, K_ROT_Y = 0.10;
+      const SCALE_X = 0.02, SCALE_Y = 0.02;
 
       while (isDemoRunning) {
         try {
-          // Trigger Single Measurement
-          await mlxDevice.sm(0x3E); 
-          await new Promise(r => setTimeout(r, 10)); 
-          
-          // Read Joystick coordinates (X, Y, Z)
-          const result = await mlxDevice.rm_joystick_xyz(false, 0x3E); 
-          
-          if (result && typeof result.x0 === 'number' && !isNaN(result.x0)) {
-            const cal = processCalibratedCoordinates(result.x0, result.y0);
+          let posX_mm = 0, posY_mm = 0, angleDeg = 0;
+          let rawX = 0, rawY = 0, rawZ = 0;
+
+          if (currentDriverType === 'scpi') {
+            await activeDevice.sm(0xFC000); 
+            await new Promise(r => setTimeout(r, 15)); 
+            const res01 = await activeDevice.rm(false, 0xFC000); 
             
-            // 1. Render 2D Joystick UI
-            updateJoystickUI(cal.x / 20, cal.y / 20); 
+            await activeDevice.sm(0x03F00); 
+            await new Promise(r => setTimeout(r, 15)); 
+            const res23 = await activeDevice.rm(false, 0x03F00); 
 
-            // 2. Render 3D Field Vector Plot (Bx, By, Bz)
-            update3DVectorPlot(result.x0, result.y0, result.z0);
+            if (!res01.error && !res23.error) {
+              const avgX = (res01.x0 + res01.x1 + res23.x2 + res23.x3) / 4;
+              const avgY = (res01.y0 + res01.y1 + res23.y2 + res23.y3) / 4;
+              const avgZ = (res01.z0 + res01.z1 + res23.z2 + res23.z3) / 4;
+
+              angleDeg = Math.atan2(-avgY, avgX) * (180 / Math.PI);
+
+              const rawGradX = ((res01.x1 + res23.x2) - (res01.x0 + res23.x3)) / 2;
+              const rawGradY = ((res01.y0 + res01.y1) - (res23.y3 + res23.y2)) / 2;
+
+              const cleanGradX = rawGradX - (avgX * K_ROT_X);
+              const cleanGradY = rawGradY - (avgY * K_ROT_Y);
+
+              latestRawMagnet.x = cleanGradX * SCALE_X;
+              latestRawMagnet.y = cleanGradY * SCALE_Y;
+
+              posX_mm = latestRawMagnet.x - magnetOffsets.x;
+              posY_mm = latestRawMagnet.y - magnetOffsets.y;
+              rawX = avgX; rawY = avgY; rawZ = avgZ;
+            }
+          } else {
+            const sample = await activeDevice.getSample();
+            if (!sample.error) {
+              latestRawMagnet.x = sample.posX_mm;
+              latestRawMagnet.y = sample.posY_mm;
+              posX_mm = latestRawMagnet.x - magnetOffsets.x;
+              posY_mm = latestRawMagnet.y - magnetOffsets.y;
+              angleDeg = sample.angleDeg;
+              rawX = sample.rawX; rawY = sample.rawY; rawZ = sample.rawZ;
+            }
           }
 
-          if (result && result.error) {
-            appendLog(`[SPI WARN] CRC Mismatch (Raw X: ${result.x0}, Y: ${result.y0}, Z: ${result.z0})\n`, 'log-badprompt');
-          }
+          updateMagnetUI(posX_mm, posY_mm, angleDeg);
+          updateJoystickUI(rawX / 20, rawY / 20); 
+          update3DVectorPlot(rawX, rawY, rawZ);
 
-          await new Promise(r => setTimeout(r, 30)); 
+          await new Promise(r => setTimeout(r, currentDriverType === 'scpi' ? 50 : 25));
         } catch (loopErr) {
-          appendLog(`[LOOP WARN]: ${loopErr.message}\n`, 'log-badprompt');
-          await new Promise(r => setTimeout(r, 50)); 
+          console.warn('[DEMO LOOP WARNING]', loopErr);
+          await new Promise(r => setTimeout(r, 150));
         }
       }
     } catch (err) {
@@ -506,442 +602,123 @@ async function runJoystickDemo() {
     }
   } else {
     // Standalone Emulation Mode
-    appendLog('[SYSTEM] Running Standalone UI Emulation...\n', 'log-okprompt');
     let angle = 0;
     while (isDemoRunning) {
-      angle += 0.12; 
-      const emulatedX = (Math.cos(angle) * 35) + (Math.sin(angle * 0.5) * 12);
-      const emulatedY = (Math.sin(angle) * 35) + (Math.cos(angle * 1.5) * 12);
-      const emulatedZ = Math.sin(angle * 2) * 20;
+      angle += 0.08; 
+      const emulatedX = Math.sin(angle * 0.7) * 1.8;
+      const emulatedY = Math.cos(angle * 0.9) * 1.8;
+      const emulatedAngle = (angle * (180 / Math.PI)) % 360;
 
-      // 1. Update 2D Joystick
-      updateJoystickUI(emulatedX, emulatedY);
-
-      // 2. Update 3D Vector Plot
-      update3DVectorPlot(emulatedX * 15, emulatedY * 15, emulatedZ * 15);
+      updateMagnetUI(emulatedX, emulatedY, emulatedAngle);
+      updateJoystickUI(emulatedX * 20, emulatedY * 20);
+      update3DVectorPlot(Math.cos(angle) * 500, Math.sin(angle) * 500, 200);
 
       await new Promise(r => setTimeout(r, 33)); 
     }
   }
 }
 
-// --- Event Listeners ---
-btnSend?.addEventListener('click', () => sendCommand(txInput.value));
-btnClear?.addEventListener('click', () => { 
-  if (logWindow) logWindow.textContent = ''; 
-  if (miniLogWindow) miniLogWindow.textContent = ''; 
-  logTotalChars = 0; 
-  logQueue.length = 0; 
-});
+// --- NVRAM Handling ---
+function initNvramControls() {
+  const btnRead = document.getElementById('btn-nvram-read');
+  const btnWrite = document.getElementById('btn-nvram-write');
+  const btnDump = document.getElementById('btn-nvram-dump');
+  const btnHs = document.getElementById('btn-nvram-hs');
+  const btnHr = document.getElementById('btn-nvram-hr');
+  const addrInput = document.getElementById('nvram-addr');
+  const valInput = document.getElementById('nvram-val');
+  const tableBody = document.getElementById('nvram-table-body');
 
-btnStartDemo?.addEventListener('click', runJoystickDemo);
+  const parseAddr = (str) => str.startsWith('0x') || str.startsWith('0X') ? parseInt(str, 16) : parseInt(str, 10);
+  const parseVal = (str) => str.startsWith('0x') || str.startsWith('0X') ? parseInt(str, 16) : parseInt(str, 10);
 
-btnStopDemo?.addEventListener('click', () => {
-  isDemoRunning = false;
-  btnStartDemo.disabled = false;
-  btnStopDemo.disabled = true;
-  updateJoystickUI(0, 0); 
-  appendLog('[SYSTEM] Demo stopped.\n', 'log-badprompt');
-});
-
-txInput?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); sendCommand(txInput.value); return; }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (history.length === 0) return;
-    if (historyIndex === -1) draftBeforeNav = txInput.value;
-    historyIndex = Math.min(history.length - 1, historyIndex + 1);
-    txInput.value = history[historyIndex];
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (historyIndex === -1) return;
-    if (historyIndex > 0) {
-      historyIndex--;
-      txInput.value = history[historyIndex];
-    } else {
-      historyIndex = -1;
-      txInput.value = draftBeforeNav;
-    }
-  }
-});
-
-document.querySelectorAll('.quick-cmd').forEach(btn => {
-  btn.addEventListener('click', () => sendCommand(btn.dataset.cmd));
-});
-
-// --- NVRAM Controller ---
-const nvramAddr = document.getElementById('nvram-addr');
-const nvramVal = document.getElementById('nvram-val');
-const btnNvramRead = document.getElementById('btn-nvram-read');
-const btnNvramWrite = document.getElementById('btn-nvram-write');
-const btnNvramDump = document.getElementById('btn-nvram-dump');
-const btnNvramHs = document.getElementById('btn-nvram-hs');
-const btnNvramHr = document.getElementById('btn-nvram-hr');
-const nvramTableBody = document.getElementById('nvram-table-body');
-const memStatusBadge = document.getElementById('mem-status-badge');
-
-const TOTAL_REGS = 64;
-const registerState = new Array(TOTAL_REGS).fill(null);
-
-function initMemoryTable() {
-  if (!nvramTableBody) return;
-  nvramTableBody.innerHTML = '';
-  for (let i = 0; i < TOTAL_REGS; i++) {
-    const tr = document.createElement('tr');
-    tr.dataset.reg = i;
-    
-    const hexReg = '0x' + i.toString(16).padStart(2, '0').toUpperCase();
-    
-    tr.innerHTML = `
-      <td>${hexReg}</td>
-      <td>${i}</td>
-      <td class="cell-hex">--</td>
-      <td class="cell-dec">--</td>
-      <td class="cell-status">Unread</td>
-    `;
-
-    tr.addEventListener('click', () => {
-      document.querySelectorAll('.mem-table tr').forEach(r => r.classList.remove('selected-row'));
-      tr.classList.add('selected-row');
-      
-      if (nvramAddr) nvramAddr.value = hexReg;
-      if (registerState[i] !== null && nvramVal) {
-        nvramVal.value = '0x' + registerState[i].toString(16).padStart(4, '0').toUpperCase();
-      }
-    });
-
-    nvramTableBody.appendChild(tr);
-  }
-}
-initMemoryTable();
-
-function parseInputNumber(val) {
-  if (!val) return NaN;
-  const str = val.trim();
-  return str.startsWith('0x') || str.startsWith('0X') ? parseInt(str, 16) : parseInt(str, 10);
-}
-
-function updateTableRegisterUI(reg, val, statusText = 'OK') {
-  registerState[reg] = val;
-  const tr = nvramTableBody?.querySelector(`tr[data-reg="${reg}"]`);
-  if (!tr) return;
-
-  const hexCell = tr.querySelector('.cell-hex');
-  const decCell = tr.querySelector('.cell-dec');
-  const statusCell = tr.querySelector('.cell-status');
-
-  const hexVal = '0x' + val.toString(16).padStart(4, '0').toUpperCase();
-  
-  if (hexCell) hexCell.textContent = hexVal;
-  if (decCell) decCell.textContent = val;
-  if (statusCell) statusCell.textContent = statusText;
-
-  hexCell?.classList.add('val-updated');
-  setTimeout(() => hexCell?.classList.remove('val-updated'), 1000);
-}
-
-async function readMemoryRegister() {
-  const reg = parseInputNumber(nvramAddr?.value);
-  if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
-    appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
-    return;
-  }
-
-  try {
-    if (memStatusBadge) memStatusBadge.textContent = `Reading ${reg}...`;
-    const res = await mlxDevice.rr(reg);
-    
+  btnRead?.addEventListener('click', async () => {
+    if (!activeDevice || currentDriverType !== 'scpi') return;
+    const addr = parseAddr(addrInput.value);
+    if (isNaN(addr)) return;
+    const res = await activeDevice.rr(addr);
     if (!res.error) {
-      if (nvramVal) nvramVal.value = '0x' + res.data.toString(16).padStart(4, '0').toUpperCase();
-      updateTableRegisterUI(reg, res.data, 'Read OK');
-      appendLog(`[MEM READ] Reg 0x${reg.toString(16).toUpperCase()}: 0x${res.data.toString(16).toUpperCase()}\n`, 'log-okprompt');
-    } else {
-      appendLog(`[MEM ERROR] Read failed at Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-badprompt');
+      valInput.value = '0x' + res.data.toString(16).toUpperCase().padStart(4, '0');
+      appendLog(`[NVRAM] Read 0x${addr.toString(16).toUpperCase()}: 0x${res.data.toString(16).toUpperCase()}\n`, 'log-okprompt');
     }
-  } catch (err) {
-    appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
-  } finally {
-    if (memStatusBadge) memStatusBadge.textContent = 'Ready';
-  }
-}
-
-async function writeMemoryRegister() {
-  const reg = parseInputNumber(nvramAddr?.value);
-  const val = parseInputNumber(nvramVal?.value);
-
-  if (isNaN(reg) || reg < 0 || reg >= TOTAL_REGS) {
-    appendLog('[MEM ERROR] Invalid Register Address\n', 'log-badprompt');
-    return;
-  }
-  if (isNaN(val) || val < 0 || val > 0xFFFF) {
-    appendLog('[MEM ERROR] Invalid 16-bit Value (0x0000 - 0xFFFF)\n', 'log-badprompt');
-    return;
-  }
-
-  try {
-    if (memStatusBadge) memStatusBadge.textContent = `Writing ${reg}...`;
-    const err = await mlxDevice.wr(reg, val);
-    
-    if (!err) {
-      updateTableRegisterUI(reg, val, 'Written');
-      appendLog(`[MEM WRITE] Written 0x${val.toString(16).toUpperCase()} to Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-okprompt');
-    } else {
-      appendLog(`[MEM ERROR] CRC or Write Error on Reg 0x${reg.toString(16).toUpperCase()}\n`, 'log-badprompt');
-    }
-  } catch (err) {
-    appendLog(`[MEM ERROR] ${err.message}\n`, 'log-badprompt');
-  } finally {
-    if (memStatusBadge) memStatusBadge.textContent = 'Ready';
-  }
-}
-
-async function dumpAllMemory() {
-  if (btnNvramDump) btnNvramDump.disabled = true;
-  appendLog('[MEM DUMP] Starting full register scan...\n', 'log-okprompt');
-  
-  for (let i = 0; i < TOTAL_REGS; i++) {
-    try {
-      if (memStatusBadge) memStatusBadge.textContent = `Dumping ${i}/${TOTAL_REGS}`;
-      const res = await mlxDevice.rr(i);
-      if (!res.error) {
-        updateTableRegisterUI(i, res.data, 'Dumped');
-      }
-      await new Promise(r => setTimeout(r, 10));
-    } catch (err) {
-      appendLog(`[MEM DUMP WARN] Error at reg ${i}: ${err.message}\n`, 'log-badprompt');
-    }
-  }
-  
-  if (memStatusBadge) memStatusBadge.textContent = 'Ready';
-  if (btnNvramDump) btnNvramDump.disabled = false;
-  appendLog('[MEM DUMP] Register scan completed.\n', 'log-okprompt');
-}
-
-btnNvramRead?.addEventListener('click', readMemoryRegister);
-btnNvramWrite?.addEventListener('click', writeMemoryRegister);
-btnNvramDump?.addEventListener('click', dumpAllMemory);
-btnNvramHs?.addEventListener('click', async () => {
-  await mlxDevice.hs();
-  appendLog('[MEM] Memory Store command (HS) executed.\n', 'log-okprompt');
-});
-btnNvramHr?.addEventListener('click', async () => {
-  await mlxDevice.hr();
-  appendLog('[MEM] Memory Recall command (HR) executed.\n', 'log-okprompt');
-});
-
-// --- JOYSTICK CALIBRATION MODULE ---
-const calibState = {
-  offsetX: 0,
-  offsetY: 0,
-  minX: Infinity,
-  maxX: -Infinity,
-  minY: Infinity,
-  maxY: -Infinity,
-  deadbandPct: 3,
-  isSweeping: false,
-  isCalibrated: false
-};
-
-const sweepPoints = [];
-
-const btnCalibZero = document.getElementById('btn-calib-zero');
-const btnCalibSweep = document.getElementById('btn-calib-sweep');
-const btnCalibSave = document.getElementById('btn-calib-save');
-const inputDeadband = document.getElementById('input-deadband');
-const valDeadband = document.getElementById('val-deadband');
-const calibCanvas = document.getElementById('calib-canvas');
-const ctxCalib = calibCanvas ? calibCanvas.getContext('2d') : null;
-
-function drawRadarGrid() {
-  if (!ctxCalib || !calibCanvas) return;
-  const w = calibCanvas.width;
-  const h = calibCanvas.height;
-  const cx = w / 2;
-  const cy = h / 2;
-
-  ctxCalib.clearRect(0, 0, w, h);
-
-  ctxCalib.strokeStyle = '#1F3A62';
-  ctxCalib.lineWidth = 1;
-  [35, 70, 110].forEach(r => {
-    ctxCalib.beginPath();
-    ctxCalib.arc(cx, cy, r, 0, 2 * Math.PI);
-    ctxCalib.stroke();
   });
 
-  ctxCalib.beginPath();
-  ctxCalib.moveTo(cx, 10); ctxCalib.lineTo(cx, h - 10);
-  ctxCalib.moveTo(10, cy); ctxCalib.lineTo(w - 10, cy);
-  ctxCalib.stroke();
+  btnWrite?.addEventListener('click', async () => {
+    if (!activeDevice || currentDriverType !== 'scpi') return;
+    const addr = parseAddr(addrInput.value);
+    const val = parseVal(valInput.value);
+    if (isNaN(addr) || isNaN(val)) return;
+    const err = await activeDevice.wr(addr, val);
+    appendLog(`[NVRAM] Write 0x${addr.toString(16).toUpperCase()} = 0x${val.toString(16).toUpperCase()}: ${!err ? 'SUCCESS' : 'FAILED'}\n`, !err ? 'log-okprompt' : 'log-badprompt');
+  });
 
-  if (sweepPoints.length > 1) {
-    ctxCalib.strokeStyle = '#59FFB0';
-    ctxCalib.lineWidth = 2;
-    ctxCalib.beginPath();
-
-    for (let i = 0; i < sweepPoints.length; i++) {
-      const pt = sweepPoints[i];
-      const px = cx + ((pt.x - calibState.offsetX) / 25);
-      const py = cy - ((pt.y - calibState.offsetY) / 25);
-
-      if (i === 0) ctxCalib.moveTo(px, py);
-      else ctxCalib.lineTo(px, py);
+  btnDump?.addEventListener('click', async () => {
+    if (!activeDevice || currentDriverType !== 'scpi' || !tableBody) return;
+    tableBody.innerHTML = '';
+    for (let reg = 0x00; reg <= 0x3F; reg++) {
+      const res = await activeDevice.rr(reg);
+      const row = document.createElement('tr');
+      row.className = 'ds-table__row';
+      row.innerHTML = `
+        <td class="ds-table__td">0x${reg.toString(16).toUpperCase().padStart(2, '0')}</td>
+        <td class="ds-table__td">${reg}</td>
+        <td class="ds-table__td">0x${res.error ? '--' : res.data.toString(16).toUpperCase().padStart(4, '0')}</td>
+        <td class="ds-table__td">${res.error ? '--' : res.data}</td>
+        <td class="ds-table__td">${res.error ? 'ERR' : 'OK'}</td>
+      `;
+      tableBody.appendChild(row);
     }
-    ctxCalib.stroke();
-  }
-}
-drawRadarGrid();
+  });
 
-btnCalibZero?.addEventListener('click', async () => {
-  try {
-    const res = await mlxDevice.rm_joystick_xyz(false, 0x3E);
-    if (!res.error) {
-      calibState.offsetX = res.x0;
-      calibState.offsetY = res.y0;
-
-      const offX = document.getElementById('telem-off-x');
-      const offY = document.getElementById('telem-off-y');
-      if (offX) offX.textContent = calibState.offsetX;
-      if (offY) offY.textContent = calibState.offsetY;
-      
-      document.getElementById('step-1')?.classList.remove('active');
-      document.getElementById('step-2')?.classList.add('active');
-      appendLog(`[CALIB] Zero Center Captured: X=${calibState.offsetX}, Y=${calibState.offsetY}\n`, 'log-okprompt');
-    }
-  } catch (err) {
-    appendLog(`[CALIB ERROR] Zero Capture Failed: ${err.message}\n`, 'log-badprompt');
-  }
-});
-
-btnCalibSweep?.addEventListener('click', () => {
-  calibState.isSweeping = !calibState.isSweeping;
-
-  if (calibState.isSweeping) {
-    btnCalibSweep.textContent = 'Stop & Process Sweep';
-    btnCalibSweep.classList.add('btn-danger');
-    sweepPoints.length = 0;
-    appendLog('[CALIB] Rotate joystick 360° to record boundaries...\n', 'log-okprompt');
-  } else {
-    btnCalibSweep.textContent = 'Start Sweep Recording';
-    btnCalibSweep.classList.remove('btn-danger');
-    
-    document.getElementById('step-2')?.classList.remove('active');
-    document.getElementById('step-3')?.classList.add('active');
-
-    const spanX = calibState.maxX - calibState.minX;
-    const spanY = calibState.maxY - calibState.minY;
-    const telemSpan = document.getElementById('telem-span');
-    if (telemSpan) telemSpan.textContent = `${spanX} x ${spanY}`;
-    appendLog(`[CALIB] Sweep finished. Span X: ${spanX}, Span Y: ${spanY}\n`, 'log-okprompt');
-  }
-});
-
-inputDeadband?.addEventListener('input', (e) => {
-  calibState.deadbandPct = parseInt(e.target.value, 10);
-  if (valDeadband) valDeadband.textContent = `${calibState.deadbandPct}%`;
-});
-
-btnCalibSave?.addEventListener('click', () => {
-  calibState.isCalibrated = true;
-  const statusEl = document.getElementById('telem-status');
-  if (statusEl) {
-    statusEl.textContent = 'Active (Calibrated)';
-    statusEl.style.color = '#59FFB0';
-  }
-  
-  document.getElementById('step-3')?.classList.remove('active');
-  document.getElementById('step-4')?.classList.add('active');
-  
-  appendLog('[CALIB] Calibration profile applied successfully.\n', 'log-okprompt');
-});
-
-document.getElementById('btn-clear-plot')?.addEventListener('click', () => {
-  sweepPoints.length = 0;
-  drawRadarGrid();
-});
-
-function processCalibratedCoordinates(rawX, rawY) {
-  const rx = typeof rawX === 'number' && !isNaN(rawX) ? rawX : 0;
-  const ry = typeof rawY === 'number' && !isNaN(rawY) ? rawY : 0;
-
-  let x = rx - calibState.offsetX;
-  let y = ry - calibState.offsetY;
-
-  if (calibState.isSweeping) {
-    if (x < calibState.minX) calibState.minX = x;
-    if (x > calibState.maxX) calibState.maxX = x;
-    if (y < calibState.minY) calibState.minY = y;
-    if (y > calibState.maxY) calibState.maxY = y;
-
-    sweepPoints.push({ x: rx, y: ry });
-    if (sweepPoints.length % 3 === 0) drawRadarGrid();
-  }
-
-  if (calibState.isCalibrated) {
-    const radius = Math.sqrt(x * x + y * y);
-    const maxSpan = Math.max(calibState.maxX || 1000, 1000);
-    const deadbandCutoff = (maxSpan * calibState.deadbandPct) / 100;
-
-    if (radius < deadbandCutoff) {
-      x = 0;
-      y = 0;
-    }
-  }
-
-  return { x, y };
+  btnHs?.addEventListener('click', async () => {
+    if (activeDevice && currentDriverType === 'scpi') await activeDevice.hs();
+  });
+  btnHr?.addEventListener('click', async () => {
+    if (activeDevice && currentDriverType === 'scpi') await activeDevice.hr();
+  });
 }
 
-// --- Debug Terminal Toggle ---
-const btnToggleDebug = document.getElementById('btn-toggle-debug');
-
-btnToggleDebug?.addEventListener('click', () => {
-  if (!miniLogWindow) return;
-  miniLogWindow.classList.toggle('hidden');
+// --- Connection Modal Event Handlers ---
+selDriverType?.addEventListener('change', (e) => {
+  if (wrapConnType) {
+    wrapConnType.style.display = e.target.value === 'scpi' ? 'block' : 'none';
+  }
 });
-
-// --- SPI Prefix & Connection Modal Logic ---
-const selConnType = document.getElementById('sel-conn-type');
-const connectModal = document.getElementById('connect-modal');
-const btnModalConnect = document.getElementById('btn-modal-connect');
-const btnCloseModal = document.getElementById('btn-close-modal');
-
-function getSpiPrefix() {
-  return selConnType ? selConnType.value : ':SPI';
-}
 
 btnConnect?.addEventListener('click', () => {
-  if (isConnected) {
-    disconnectSerial();
-  } else {
-    connectModal?.classList.remove('hidden');
-  }
+  if (isConnected) disconnectSerial();
+  else connectModal?.classList.remove('hidden');
 });
 
-btnCloseModal?.addEventListener('click', () => {
-  connectModal?.classList.add('hidden');
-});
+btnCloseModal?.addEventListener('click', () => connectModal?.classList.add('hidden'));
 
 btnModalConnect?.addEventListener('click', async () => {
   connectModal?.classList.add('hidden');
   await connectSerial();
 });
 
-// --- UI Tab Logic ---
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    // 1. Remove active states from all tabs and views
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.remove('active', 'ds-tabs__tab--active');
-    });
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+btnSend?.addEventListener('click', () => sendCommand(txInput.value));
+btnClear?.addEventListener('click', () => { 
+  if (logWindow) logWindow.textContent = ''; 
+  if (miniLogWindow) miniLogWindow.textContent = ''; 
+  logTotalChars = 0; logQueue.length = 0; 
+});
 
-    // 2. Add active states to the clicked tab and targeted view
-    btn.classList.add('active', 'ds-tabs__tab--active');
-    const targetView = document.getElementById(btn.dataset.target);
-    if (targetView) {
-      targetView.classList.add('active');
-    }
-  });
+btnStartDemo?.addEventListener('click', runJoystickDemo);
+btnStopDemo?.addEventListener('click', () => {
+  isDemoRunning = false;
+  btnStartDemo.disabled = false;
+  btnStopDemo.disabled = true;
+  updateJoystickUI(0, 0); updateMagnetUI(0, 0);
+  appendLog('[SYSTEM] Demo stopped.\n', 'log-badprompt');
+});
+
+txInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendCommand(txInput.value); }
+});
+
+document.querySelectorAll('.quick-cmd').forEach(btn => {
+  btn.addEventListener('click', () => sendCommand(btn.dataset.cmd));
 });
 
 // --- 3D Vector Plot Setup ---
@@ -949,75 +726,36 @@ const MAX_TRAIL_POINTS = 60;
 const history3D = { x: [], y: [], z: [] };
 
 const layout3D = {
-  autosize: true,
-  margin: { l: 0, r: 0, b: 0, t: 0 },
-  paper_bgcolor: 'rgba(0,0,0,0)',
-  plot_bgcolor: 'rgba(0,0,0,0)',
+  autosize: true, margin: { l: 0, r: 0, b: 0, t: 0 },
+  paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
   scene: {
     aspectmode: 'cube',
-    xaxis: { title: 'Bx (X)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
-    yaxis: { title: 'By (Y)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
-    zaxis: { title: 'Bz (Z)', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    xaxis: { title: 'Bx', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    yaxis: { title: 'By', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    zaxis: { title: 'Bz', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
     bgcolor: 'rgba(0,0,0,0)'
   }
 };
 
-// 1. Fixed Rest Origin Ball (0,0,0)
-const traceOrigin = {
-  x: [0], y: [0], z: [0],
-  mode: 'markers',
-  type: 'scatter3d',
-  marker: { size: 6, color: '#A9B8C9', opacity: 0.5 },
-  name: 'Rest Center (0,0,0)'
-};
+const traceOrigin = { x: [0], y: [0], z: [0], mode: 'markers', type: 'scatter3d', marker: { size: 6, color: '#A9B8C9', opacity: 0.5 }, name: 'Center' };
+const traceTrail = { x: [], y: [], z: [], mode: 'lines', type: 'scatter3d', line: { color: '#8fc1cc', width: 4 }, name: 'Trail' };
+const traceLiveBall = { x: [0], y: [0], z: [0], mode: 'markers', type: 'scatter3d', marker: { size: 10, color: '#65BBA9' }, name: 'Live' };
 
-// 2. Trailing Line Path
-const traceTrail = {
-  x: [], y: [], z: [],
-  mode: 'lines',
-  type: 'scatter3d',
-  line: { color: '#8fc1cc', width: 4 },
-  name: 'Motion Trail'
-};
-
-// 3. Live Active Ball
-const traceLiveBall = {
-  x: [0], y: [0], z: [0],
-  mode: 'markers',
-  type: 'scatter3d',
-  marker: { size: 10, color: '#65BBA9', symbol: 'circle' },
-  name: 'Live Vector'
-};
-
-// Initialize 3D Plotly Canvas
 if (document.getElementById('plot-3d-container') && window.Plotly) {
   Plotly.newPlot('plot-3d-container', [traceOrigin, traceTrail, traceLiveBall], layout3D);
 }
 
-// Function to push new coordinates
-export function update3DVectorPlot(rawX, rawY, rawZ) {
+export function update3DVectorPlot(rx, ry, rz) {
   if (!window.Plotly || !document.getElementById('plot-3d-container')) return;
+  const x = typeof rx === 'number' && !isNaN(rx) ? rx : 0;
+  const y = typeof ry === 'number' && !isNaN(ry) ? ry : 0;
+  const z = typeof rz === 'number' && !isNaN(rz) ? rz : 0;
 
-  const rx = typeof rawX === 'number' && !isNaN(rawX) ? rawX : 0;
-  const ry = typeof rawY === 'number' && !isNaN(rawY) ? rawY : 0;
-  const rz = typeof rawZ === 'number' && !isNaN(rawZ) ? rawZ : 0;
-
-  // Subtract calibrated center offsets
-  const x = rx - (calibState?.offsetX || 0);
-  const y = ry - (calibState?.offsetY || 0);
-  const z = rz;
-
-  history3D.x.push(x);
-  history3D.y.push(y);
-  history3D.z.push(z);
-
+  history3D.x.push(x); history3D.y.push(y); history3D.z.push(z);
   if (history3D.x.length > MAX_TRAIL_POINTS) {
-    history3D.x.shift();
-    history3D.y.shift();
-    history3D.z.shift();
+    history3D.x.shift(); history3D.y.shift(); history3D.z.shift();
   }
 
-  // Fast WebGL update
   Plotly.react('plot-3d-container', [
     traceOrigin,
     { ...traceTrail, x: history3D.x, y: history3D.y, z: history3D.z },
@@ -1025,31 +763,13 @@ export function update3DVectorPlot(rawX, rawY, rawZ) {
   ], layout3D);
 }
 
-// Reset Trail Button
 document.getElementById('btn-reset-3d-trail')?.addEventListener('click', () => {
   history3D.x = []; history3D.y = []; history3D.z = [];
   if (window.Plotly) {
-    Plotly.react('plot-3d-container', [
-      traceOrigin,
-      { ...traceTrail, x: [], y: [], z: [] },
-      { ...traceLiveBall, x: [0], y: [0], z: [0] }
-    ], layout3D);
+    Plotly.react('plot-3d-container', [traceOrigin, { ...traceTrail, x: [], y: [], z: [] }, { ...traceLiveBall, x: [0], y: [0], z: [0] }], layout3D);
   }
 });
 
-// Update tab switching listener to auto-resize 3D Canvas when tab becomes active
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'ds-tabs__tab--active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    btn.classList.add('active', 'ds-tabs__tab--active');
-    
-    const target = document.getElementById(btn.dataset.target);
-    if (target) target.classList.add('active');
-
-    // Trigger Plotly Resize when clicking the 3D tab
-    if (btn.dataset.target === 'view-3dplot' && window.Plotly) {
-      Plotly.Plots.resize('plot-3d-container');
-    }
-  });
+document.getElementById('btn-toggle-debug')?.addEventListener('click', () => {
+  miniLogWindow?.classList.toggle('hidden');
 });

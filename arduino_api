@@ -1,0 +1,44 @@
+/**
+ * arduino_api.js
+ * Direct Arduino Serial Telemetry Driver
+ */
+export class Arduino_API {
+  constructor() {
+    this.latestSample = {
+      error: false,
+      posX_mm: 0,
+      posY_mm: 0,
+      angleDeg: 0,
+      rawX: 0,
+      rawY: 0,
+      rawZ: 0
+    };
+    this.hasNewData = false;
+  }
+
+  // Called whenever the Web Serial reader gets a new line from the Arduino
+  processLine(line) {
+    const clean = line.trim();
+    if (!clean || clean.startsWith('#') || clean.startsWith('//')) return;
+
+    // Expected format: posX,posY,angle,rawX,rawY,rawZ (or basic CSV)
+    const tokens = clean.split(',').map(v => parseFloat(v.trim()));
+    if (tokens.length >= 3 && !tokens.some(isNaN)) {
+      this.latestSample = {
+        error: false,
+        posX_mm: tokens[0] || 0,
+        posY_mm: tokens[1] || 0,
+        angleDeg: tokens[2] || 0,
+        rawX: tokens[3] !== undefined ? tokens[3] : (tokens[0] * 20),
+        rawY: tokens[4] !== undefined ? tokens[4] : (tokens[1] * 20),
+        rawZ: tokens[5] !== undefined ? tokens[5] : 0
+      };
+      this.hasNewData = true;
+    }
+  }
+
+  async getSample() {
+    // Return latest sample with safe fallback
+    return { ...this.latestSample };
+  }
+}

@@ -3,17 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MLX90396 Web UI</title>
-  <!-- Plotly.js for WebGL 3D Visualization -->
+  <title>MLX90396 Multi-Demo Platform</title>
+  
+  <!-- Plotly + Three.js & OrbitControls -->
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <!-- 1. External Design System -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  
   <link rel="stylesheet" href="webdesign.css" />
 
-  <!-- 2. Local Hardware-Specific Styles (3D Joystick & Canvas) -->
   <style>
-    /* Custom Page Overrides */
     body {
-      background-image:  url('resources/background.jpg');
+      background-image: url('resources/background.jpg');
       background-size: cover;
       background-position: center;
       background-attachment: fixed;
@@ -24,7 +25,7 @@
     }
 
     .app-shell {
-      width: min(850px, 100%);
+      width: min(920px, 100%);
       background: var(--color-canvas);
       border: 1.5px solid var(--color-border);
       border-radius: var(--radius-md);
@@ -41,10 +42,49 @@
       padding-bottom: 16px;
     }
 
+    /* Top-Level Demo & Sub-Tab View Switching */
+    .demo-view { display: none; }
+    .demo-view.active { display: block; }
     .view { display: none; }
     .view.active { display: block; }
 
-    /* --- COMPILED SCSS 3D JOYSTICK (Local Component) --- */
+    /* --- SFI STYLING --- */
+    .sfi-controls-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--color-surface, #111827); padding: 10px 16px; border-radius: var(--radius-md);
+      border: 1px solid var(--color-border); margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
+    }
+    .sfi-dashboard-grid {
+      display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 16px;
+    }
+    @media (max-width: 768px) { .sfi-dashboard-grid { grid-template-columns: 1fr; } }
+    #canvas3d-container {
+      width: 100%; height: 360px; border-radius: 8px; overflow: hidden;
+      background: #ffffff; position: relative; cursor: grab;
+    }
+    #canvas3d-container:active { cursor: grabbing; }
+    .hint-overlay {
+      position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.85);
+      padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #ffffff; pointer-events: none;
+    }
+    .pixels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .pixel-card { background: #070d1a; border: 1px solid var(--color-border); border-radius: 6px; padding: 10px; }
+    .pixel-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: #00ff88; margin-bottom: 4px; }
+    .pixel-val-row { display: flex; justify-content: space-between; font-size: 10px; font-family: monospace; color: var(--color-ink-muted); }
+    .slider-group { margin-top: 6px; }
+    .slider-group label { display: flex; justify-content: space-between; font-size: 10px; color: var(--color-ink-muted); }
+    .slider-group input { width: 100%; height: 4px; accent-color: #00d2ff; }
+    .battle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+    @media (max-width: 768px) { .battle-grid { grid-template-columns: 1fr; } }
+    .battle-box { background: #070d1d; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; text-align: center; }
+    .battle-box.fail { border-color: #ff3366; }
+    .battle-box.pass { border-color: #00ff88; }
+    .plot3d-canvas { width: 100%; height: 260px; border-radius: 6px; margin-top: 8px; background: #01040d; }
+    .data-readout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; font-size: 11px; font-family: monospace; }
+    .data-cell { background: #111a2e; padding: 6px; border-radius: 4px; }
+    .data-label { color: var(--color-ink-muted); font-size: 9px; }
+
+    /* --- 3D JOYSTICK --- */
     .joystick-wrapper {
       display: flex; justify-content: center; align-items: center; 
       padding: 60px; min-height: 380px; position: relative;
@@ -96,8 +136,6 @@
       box-shadow: calc(var(--tx, 0) * -0.25px) calc(var(--ty, 0) * -0.25px) 20px -10px rgba(0,0,0,0.8);
       filter: blur(5px); opacity: 0.4;
     }
-
-    /* LEDs */
     .joystick__led {
       position: absolute; top: -40px; left: 50%; width: 4px; height: 4px;
       border-radius: 50%; background: rgba(0, 0, 0, 0.7);
@@ -107,7 +145,44 @@
     .led-low-1 { background: #EEA320; box-shadow: 0 0 5px #F2B630; }
     .led-low-2 { background: #EEA320; box-shadow: 0 0 5px #FCDA4F; }
 
-    /* Custom Terminal Code Box Override */
+    /* --- 2D SQUARE KNOB MECHANICS --- */
+    .magnet-plane {
+      position: relative; width: 100%; max-width: 450px; height: 450px;
+      background: #6DB3A1; display: flex; justify-content: center; align-items: center;
+      margin: 0 auto; border-radius: 8px; color: white; font-family: sans-serif;
+      overflow: hidden; border: 3px dashed #3D7365; 
+    }
+    .magnet-sensor {
+      width: 150px; height: 150px; background: #0B2C40; border-radius: 6px;
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4); overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .sensor-grid {
+      width: 100%; height: 100%; position: absolute; top: 0; left: 0;
+      pointer-events: none; user-select: none;
+    }
+    .magnet-disk {
+      width: 100px; height: 100px; border-radius: 50%;
+      background: linear-gradient(to right, #2452D1 50%, #D13434 50%); 
+      position: absolute; top: 50%; left: 50%; margin-top: -50px; margin-left: -50px;
+      display: flex; align-items: center; justify-content: center;
+      transform-origin: 50% 50%; box-sizing: border-box; border: 4px solid #1A1F26;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.6), inset 0 0 0 3px rgba(255,255,255,0.2);
+      z-index: 10;
+    }
+    .magnet-pole {
+      flex: 1; text-align: center; font-weight: 800; font-size: 1.3rem;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.6); user-select: none; pointer-events: none;
+    }
+    .magnet-arrow {
+      position: absolute; color: rgba(255, 255, 255, 0.7); font-weight: 700;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-size: 0.95rem; user-select: none; pointer-events: none; z-index: 5;
+    }
+    .arrow-icon { width: 28px; height: 28px; fill: currentColor; }
+
+    /* Terminal */
     .log-window {
       height: 320px; background: var(--color-code-bg); border-radius: 3px; padding: 12px;
       font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
@@ -118,251 +193,369 @@
     .log-rx { color: var(--color-ink-muted); } 
     .log-okprompt { color: var(--color-accent); } 
     .log-badprompt { color: var(--color-danger); }
-
     .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <main class="app-shell">
 
-    <!-- HEADER ROW -->
+    <!-- TOP HEADER ROW: 2 MAIN DEMO TABS & CONNECT BUTTON -->
     <div class="header-row">
-      <h1 style="margin: 0; font-family: var(--font-display); font-size: 1.5rem;">MLX90396 Web UI</h1>
+      <div class="ds-tabs" style="margin-bottom: 0;">
+        <div class="ds-tabs__list">
+          <button class="ds-tabs__tab demo-tab-btn" data-target="demo-sfi">SFI Joystick</button>
+          <button class="ds-tabs__tab ds-tabs__tab--active demo-tab-btn" data-target="demo-jwt">JWT demo</button>
+        </div>
+      </div>
       <button id="btn-connect" class="ds-button ds-button--primary ds-button--md">Connect USB</button>
     </div>
 
-    <!-- MAIN TABS -->
-    <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
-      <div class="ds-tabs__list">
-        <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick Demo</button>
-        <button class="ds-tabs__tab tab-btn" data-target="view-3dplot">3D Field Plot</button> <!-- NEW TAB -->
-        <button class="ds-tabs__tab tab-btn" data-target="view-terminal">SCPI Terminal</button>
-        <button class="ds-tabs__tab tab-btn" data-target="view-calib">Calibration</button>
-        <button class="ds-tabs__tab tab-btn" data-target="view-memory">NVRAM Memory</button>
-      </div>
-    </div>
-
-<!-- VIEW 5: 3D LIVE VECTOR PLOT -->
-<div id="view-3dplot" class="view">
-  <div class="ds-card ds-card--pad-md" style="width: 100%;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-      <h3 style="margin: 0; font-size: var(--font-size-md);">Live 3D Field Vector ($B_x, B_y, B_z$)</h3>
-      <button id="btn-reset-3d-trail" class="ds-button ds-button--secondary ds-button--sm">Reset Trail</button>
-    </div>
-    
-    <div style="background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); padding: 8px;">
-      <div id="plot-3d-container" style="width: 100%; height: 460px;"></div>
-    </div>
-  </div>
-</div>
-
-    <!-- VIEW 1: 3D JOYSTICK -->
-    <div id="view-joystick" class="view active">
-      <div class="joystick-wrapper">
-        <div class="joystick" id="joystick-base">
-          <div class="joystick__zero"></div>
-          <div class="joystick__stick" id="joystick-stick"></div>
-          <div class="joystick__ball"></div>
+    <!-- MAIN TAB 1: SFI JOYSTICK -->
+    <div id="demo-sfi" class="demo-view">
+      <div class="sfi-controls-bar">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="ds-button ds-button--primary ds-button--sm" id="btn-pattern">🔄 Full Pattern Motion</button>
+          <button class="ds-button ds-button--danger ds-button--sm" id="btn-coil">⚡ Stray Field Coil (5 mT)</button>
+          <button class="ds-button ds-button--secondary ds-button--sm" id="btn-reset-trace">🧹 Clear Trajectories</button>
         </div>
-      </div>
-      
-      <!-- DEMO CONTROLS -->
-      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
-        <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
-        <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
-        <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
+        <span style="font-size: 11px; color: var(--color-ink-muted);" id="pattern-phase-txt">
+          Axially Magnetized Disc | Dynamic 4-Pixel Sensing
+        </span>
       </div>
 
-      <!-- MINI TERMINAL -->
-      <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
-
-      <!-- API TEST BUTTONS -->
-      <div style="margin-top: 24px; text-align: center;">
-        <h4 style="color: var(--color-ink-muted); margin-bottom: 12px; font-size: var(--font-size-sm); text-transform: uppercase;">Device Commands</h4>
-        <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 650px; margin: 0 auto;">
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rt" disabled>Reset</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="hs" disabled>Memory Store</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="hr" disabled>Memory Recall</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="ex" disabled>Idle mode</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rr" disabled>Read Register</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="wr" disabled>Write Register</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="sb" disabled>Burst mode</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="swoc" disabled>WOC mode</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="sm" disabled>Single measurement</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rm_xyz" disabled>Read memory</button>
-          <button class="api-btn ds-button ds-button--secondary ds-button--sm" data-api="rm_sfi" disabled>RM (SFI)</button>
+      <div class="sfi-dashboard-grid">
+        <!-- CARD 1: 3D Viewport -->
+        <div class="ds-card ds-card--pad-md" style="display: flex; flex-direction: column;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);">Dome Kinematics</span>
+            <span style="font-size: 11px; color: var(--color-accent);" id="joy-pos-text">Tilt X: 0.0° | Tilt Y: 0.0° | Press Z: 0.0 mm</span>
+          </div>
+          <div id="canvas3d-container">
+            <div class="hint-overlay">Left Click: Orbit | Drag Handle: Move Joystick Across Dome</div>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <!-- VIEW 2: SCPI TERMINAL -->
-    <div id="view-terminal" class="view">
-      <div style="display: grid; grid-template-columns: 1fr 180px; gap: 16px;">
-        <div style="display: flex; flex-direction: column; gap: 12px;">
-          <div id="log-window" class="log-window"></div>
+        <!-- CARD 2: 4-Pixel Sensing Grid -->
+        <div class="ds-card ds-card--pad-md">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);">Hall Pixels (d = 1.1 mm)</span>
+            <span style="font-size: 10px; color: #a855f7;">Dynamic Response</span>
+          </div>
           
-          <div style="display: flex; gap: 8px;">
-            <div class="ds-field" style="width: 100%;">
-              <input type="text" id="tx-input" class="ds-field__input" placeholder="Type SCPI command..." disabled />
+          <div class="pixels-grid">
+            <div class="pixel-card" id="px-card-0">
+              <div class="pixel-head"><span>P0 (BR)</span><span id="p0-status">1.0x</span></div>
+              <div class="pixel-val-row"><span>Bx:<b id="p0-bx">0.0</b></span><span>By:<b id="p0-by">0.0</b></span><span>Bz:<b id="p0-bz">0.0</b></span></div>
+              <div class="slider-group">
+                <label><span>Gain</span><span id="p0-sens-lbl">1.00x</span></label>
+                <input type="range" id="sens-p0" min="0.5" max="1.5" step="0.05" value="1.0">
+              </div>
             </div>
-            <button id="btn-send" class="ds-button ds-button--primary ds-button--md" disabled>Send</button>
-          </div>
-
-          <div style="display: flex; gap: 16px; align-items: center; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
-            <label>EOL: 
-              <select id="sel-eol" class="ds-field__input" style="padding: 2px 8px; min-height: 1.8rem; width: auto; display: inline-block;">
-                <option value="\n">LF</option>
-                <option value="\r">CR</option>
-                <option value="\r\n" selected>CRLF</option>
-              </select>
-            </label>
-            <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
-            <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
-            <button id="btn-clear" class="ds-button ds-button--secondary ds-button--sm" style="margin-left: auto;">Clear</button>
+            <div class="pixel-card" id="px-card-1">
+              <div class="pixel-head"><span>P1 (TR)</span><span id="p1-status">1.0x</span></div>
+              <div class="pixel-val-row"><span>Bx:<b id="p1-bx">0.0</b></span><span>By:<b id="p1-by">0.0</b></span><span>Bz:<b id="p1-bz">0.0</b></span></div>
+              <div class="slider-group">
+                <label><span>Gain</span><span id="p1-sens-lbl">1.00x</span></label>
+                <input type="range" id="sens-p1" min="0.5" max="1.5" step="0.05" value="1.0">
+              </div>
+            </div>
+            <div class="pixel-card" id="px-card-2">
+              <div class="pixel-head"><span>P2 (TL)</span><span id="p2-status">1.0x</span></div>
+              <div class="pixel-val-row"><span>Bx:<b id="p2-bx">0.0</b></span><span>By:<b id="p2-by">0.0</b></span><span>Bz:<b id="p2-bz">0.0</b></span></div>
+              <div class="slider-group">
+                <label><span>Gain</span><span id="p2-sens-lbl">1.00x</span></label>
+                <input type="range" id="sens-p2" min="0.5" max="1.5" step="0.05" value="1.0">
+              </div>
+            </div>
+            <div class="pixel-card" id="px-card-3">
+              <div class="pixel-head"><span>P3 (BL)</span><span id="p3-status">1.0x</span></div>
+              <div class="pixel-val-row"><span>Bx:<b id="p3-bx">0.0</b></span><span>By:<b id="p3-by">0.0</b></span><span>Bz:<b id="p3-bz">0.0</b></span></div>
+              <div class="slider-group">
+                <label><span>Gain</span><span id="p3-sens-lbl">1.00x</span></label>
+                <input type="range" id="sens-p3" min="0.5" max="1.5" step="0.05" value="1.0">
+              </div>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">Quick Cmds</h3>
-          <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd="*IDN?">*IDN?</button>
-          <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd=":SYST:INFO">:SYST:INFO</button>
-          <button class="quick-cmd ds-button ds-button--danger ds-button--sm" data-cmd="*RST">*RST</button>
-          <hr class="ds-divider" />
-          <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">History</h3>
-          <div id="history-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto;"></div>
+      <!-- CARD 3: Battle Comparison -->
+      <div class="ds-card ds-card--pad-md" style="margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-warning);">⚡ Standard 3D Hall vs MLX90396 Differential Stray Field Immunity</span>
+          <span style="font-size: 11px; color: var(--color-ink-muted);" id="coil-readout-lbl">Coil Status: INACTIVE (0 mT)</span>
+        </div>
+
+        <div class="battle-grid">
+          <div class="battle-box fail">
+            <div style="font-size: 11px; font-weight: 800; color: #ff3366;">STANDARD 3D HALL SENSOR</div>
+            <div class="plot3d-canvas" id="canvas3d-std-plot"></div>
+            <div class="data-readout">
+              <div class="data-cell"><div class="data-label">Measured Bx</div><span id="std-read-bx" style="color:#ff3366">0.0 mT</span></div>
+              <div class="data-cell"><div class="data-label">Measured By</div><span id="std-read-by" style="color:#ff3366">0.0 mT</span></div>
+              <div class="data-cell"><div class="data-label">Measured Bz</div><span id="std-read-bz" style="color:#ff3366">0.0 mT</span></div>
+            </div>
+          </div>
+
+          <div class="battle-box pass">
+            <div style="font-size: 11px; font-weight: 800; color: #00ff88;">MLX90396 SFI DIFFERENTIAL</div>
+            <div class="plot3d-canvas" id="canvas3d-mlx-plot"></div>
+            <div class="data-readout">
+              <div class="data-cell"><div class="data-label">Diff ΔBx (P13)</div><span id="mlx-read-dbx" style="color:#00ff88">0.0 mT</span></div>
+              <div class="data-cell"><div class="data-label">Diff ΔBy (P02)</div><span id="mlx-read-dby" style="color:#00ff88">0.0 mT</span></div>
+              <div class="data-cell"><div class="data-label">Diff ΔBz (P02)</div><span id="mlx-read-dbz" style="color:#00ff88">0.0 mT</span></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
- <!-- VIEW 3: JOYSTICK CALIBRATION -->
-<div id="view-calib" class="view">
-  <div style="display: grid; grid-template-columns: 280px 1fr; gap: 16px;">
-    
-    <!-- LEFT PANEL: CALIBRATION WIZARD -->
-    <div class="ds-card ds-card--pad-md" style="width: 100%;">
-      <h3 style="margin: 0 0 12px 0; font-size: var(--font-size-md);">Calibration Wizard</h3>
-      
-      <div style="display: flex; flex-direction: column; gap: 12px;">
-        <div id="step-1" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border);">
-          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">1. Set Rest Center</h4>
-          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Leave joystick untouched at center rest.</p>
-          <button id="btn-calib-zero" class="ds-button ds-button--secondary ds-button--sm" disabled>Capture Zero</button>
-        </div>
-
-        <div id="step-2" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
-          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">2. Boundary Sweep</h4>
-          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Rotate stick 360° along outer edge.</p>
-          <button id="btn-calib-sweep" class="ds-button ds-button--secondary ds-button--sm" disabled>Start Sweep Recording</button>
-        </div>
-
-        <div id="step-3" class="ds-slider" style="width: 100%; padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
-          <div class="ds-slider__meta">
-            <span class="ds-slider__label">3. Deadband Filter</span>
-            <span id="val-deadband" class="ds-slider__value">3%</span>
-          </div>
-          <input type="range" id="input-deadband" class="ds-slider__input" min="0" max="15" value="3" />
-        </div>
-
-        <div id="step-4" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
-          <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">4. Apply Calibration</h4>
-          <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Save computed parameters.</p>
-          <button id="btn-calib-save" class="ds-button ds-button--secondary ds-button--sm" disabled>Apply Calibration</button>
+    <!-- MAIN TAB 2: JWT DEMO -->
+    <div id="demo-jwt" class="demo-view active">
+      <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
+        <div class="ds-tabs__list">
+          <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick</button>
+          <button class="ds-tabs__tab tab-btn" data-target="view-magnet">2D Magnet</button>
+          <button class="ds-tabs__tab tab-btn" data-target="view-3dplot">3D Plot</button> 
+          <button class="ds-tabs__tab tab-btn" data-target="view-terminal">Terminal</button>
+          <button class="ds-tabs__tab tab-btn" data-target="view-calib">Calibration</button>
+          <button class="ds-tabs__tab tab-btn" data-target="view-memory">NVRAM</button>
         </div>
       </div>
-    </div>
 
-    <!-- RIGHT PANEL: MOTION TRACE & TELEMETRY -->
-    <div style="display: flex; flex-direction: column; gap: 16px;">
-      
-      <!-- Motion Radar Canvas (Centered) -->
-      <div class="ds-card ds-card--pad-md" style="width: 100%;">
-        <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <h3 style="margin: 0; font-size: var(--font-size-sm);">Magnetic Motion Trace (Bx vs By)</h3>
-          <button id="btn-clear-plot" class="ds-button ds-button--secondary ds-button--sm">Clear Plot</button>
+      <!-- SUB-VIEW: 2D MAGNET PLANE -->
+      <div id="view-magnet" class="view">
+        <div class="ds-card ds-card--pad-md" style="width: 100%;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <div>
+              <h3 style="margin: 0; font-size: var(--font-size-md);">Diametrical Magnet Orientation</h3>
+              <p style="margin: 4px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+                Travel Area: &plusmn;2.5 mm (&plusmn;75 px). South Pole (Red) tracks magnetic orientation.
+              </p>
+            </div>
+            <button id="btn-zero-magnet" class="ds-button ds-button--secondary ds-button--sm">Zero Position</button>
+          </div>
+          
+          <div class="magnet-plane">
+            <div class="magnet-arrow" style="top: 12px;"><svg class="arrow-icon" viewBox="0 0 24 24"><path d="M12 2L4 10h5v12h6V10h5z"/></svg><span>+Y</span></div>
+            <div class="magnet-arrow" style="bottom: 12px;"><span>-Y</span><svg class="arrow-icon" viewBox="0 0 24 24" style="transform: rotate(180deg);"><path d="M12 2L4 10h5v12h6V10h5z"/></svg></div>
+            <div class="magnet-arrow" style="left: 12px; flex-direction: row;"><svg class="arrow-icon" viewBox="0 0 24 24" style="transform: rotate(-90deg); margin-right: 4px;"><path d="M12 2L4 10h5v12h6V10h5z"/></svg><span>-X</span></div>
+            <div class="magnet-arrow" style="right: 12px; flex-direction: row;"><span>+X</span><svg class="arrow-icon" viewBox="0 0 24 24" style="transform: rotate(90deg); margin-left: 4px;"><path d="M12 2L4 10h5v12h6V10h5z"/></svg></div>
+
+            <span style="position: absolute; bottom: 12px; left: 16px; font-weight: bold; font-size: 1.2rem; color: #0B2C40; opacity: 0.8;">PCB</span>
+            <div class="magnet-sensor">
+              <svg class="sensor-grid" viewBox="-75 -75 150 150">
+                <defs>
+                  <pattern id="grid-1mm" width="30" height="30" patternUnits="userSpaceOnUse" x="-75" y="-75">
+                    <path d="M 30 0 L 0 0 0 30" fill="none" stroke="rgba(255, 255, 255, 0.07)" stroke-width="1" />
+                  </pattern>
+                </defs>
+                <rect x="-75" y="-75" width="150" height="150" fill="url(#grid-1mm)" />
+                <line x1="-75" y1="0" x2="75" y2="0" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1.2" />
+                <line x1="0" y1="-75" x2="0" y2="75" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1.2" />
+                <line x1="-60" y1="-4" x2="-60" y2="4" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-30" y1="-3" x2="-30" y2="3" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="30" y1="-3" x2="30" y2="3" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="60" y1="-4" x2="60" y2="4" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-4" y1="-60" x2="4" y2="-60" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-3" y1="-30" x2="3" y2="-30" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-3" y1="30" x2="3" y2="30" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-4" y1="60" x2="4" y2="60" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <text x="-60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-2</text>
+                <text x="-30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-1</text>
+                <text x="30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+1</text>
+                <text x="60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+2</text>
+                <text x="6" y="-58" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+2</text>
+                <text x="6" y="-28" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+1</text>
+                <text x="6" y="32" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-1</text>
+                <text x="6" y="62" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-2</text>
+                <text x="-71" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
+                <text x="47" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
+                <text x="-71" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
+                <text x="47" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
+              </svg>
+            </div>
+            
+            <div class="magnet-disk" id="magnet-disk">
+              <div class="magnet-pole">N</div>
+              <div class="magnet-pole">S</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW: 3D LIVE VECTOR PLOT -->
+      <div id="view-3dplot" class="view">
+        <div class="ds-card ds-card--pad-md" style="width: 100%;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0; font-size: var(--font-size-md);">Live 3D Field Vector ($B_x, B_y, B_z$)</h3>
+            <button id="btn-reset-3d-trail" class="ds-button ds-button--secondary ds-button--sm">Reset Trail</button>
+          </div>
+          <div style="background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); padding: 8px;">
+            <div id="plot-3d-container" style="width: 100%; height: 460px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW: 3D JOYSTICK -->
+      <div id="view-joystick" class="view active">
+        <div class="joystick-wrapper">
+          <div class="joystick" id="joystick-base">
+            <div class="joystick__zero"></div>
+            <div class="joystick__stick" id="joystick-stick"></div>
+            <div class="joystick__ball"></div>
+          </div>
         </div>
         
-        <!-- Center Flex Wrapper -->
-        <div style="background: var(--color-surface); padding: 16px; border-radius: 3px; border: 1px solid var(--color-border); display: flex; justify-content: center; align-items: center; width: 100%;">
-          <canvas id="calib-canvas" width="300" height="300" style="display: block;"></canvas>
+        <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
+          <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
+          <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
+          <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
+        </div>
+
+        <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
+
+        <div style="margin-top: 24px; text-align: center;">
+          <h4 style="color: var(--color-ink-muted); margin-bottom: 12px; font-size: var(--font-size-sm); text-transform: uppercase;">Device Commands</h4>
+          <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 650px; margin: 0 auto;"></div>
         </div>
       </div>
 
-      <!-- Telemetry Status Bar -->
-      <div class="ds-card ds-card--pad-md" style="width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); text-align: center;">
-        <div>
-          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset X</span>
-          <div id="telem-off-x" style="font-weight: bold; color: var(--color-accent);">0</div>
-        </div>
-        <div>
-          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset Y</span>
-          <div id="telem-off-y" style="font-weight: bold; color: var(--color-accent);">0</div>
-        </div>
-        <div>
-          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Span</span>
-          <div id="telem-span" style="font-weight: bold; color: var(--color-accent);">0</div>
-        </div>
-        <div>
-          <span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Status</span>
-          <div id="telem-status" style="font-weight: bold; color: var(--color-warning);">Uncalibrated</div>
+      <!-- SUB-VIEW: SCPI TERMINAL -->
+      <div id="view-terminal" class="view">
+        <div style="display: grid; grid-template-columns: 1fr 180px; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div id="log-window" class="log-window"></div>
+            <div style="display: flex; gap: 8px;">
+              <div class="ds-field" style="width: 100%;">
+                <input type="text" id="tx-input" class="ds-field__input" placeholder="Type SCPI command..." disabled />
+              </div>
+              <button id="btn-send" class="ds-button ds-button--primary ds-button--md" disabled>Send</button>
+            </div>
+            <div style="display: flex; gap: 16px; align-items: center; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
+              <label>EOL: 
+                <select id="sel-eol" class="ds-field__input" style="padding: 2px 8px; min-height: 1.8rem; width: auto; display: inline-block;">
+                  <option value="\n">LF</option>
+                  <option value="\r">CR</option>
+                  <option value="\r\n" selected>CRLF</option>
+                </select>
+              </label>
+              <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
+              <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
+              <button id="btn-clear" class="ds-button ds-button--secondary ds-button--sm" style="margin-left: auto;">Clear</button>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">Quick Cmds</h3>
+            <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd="*IDN?">*IDN?</button>
+            <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd=":SYST:INFO">:SYST:INFO</button>
+            <button class="quick-cmd ds-button ds-button--danger ds-button--sm" data-cmd="*RST">*RST</button>
+            <hr class="ds-divider" />
+            <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">History</h3>
+            <div id="history-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto;"></div>
+          </div>
         </div>
       </div>
 
-    </div>
+      <!-- SUB-VIEW: JOYSTICK CALIBRATION -->
+      <div id="view-calib" class="view">
+        <div style="display: grid; grid-template-columns: 280px 1fr; gap: 16px;">
+          <div class="ds-card ds-card--pad-md" style="width: 100%;">
+            <h3 style="margin: 0 0 12px 0; font-size: var(--font-size-md);">Calibration Wizard</h3>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              <div id="step-1" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border);">
+                <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">1. Set Rest Center</h4>
+                <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Leave joystick untouched at center rest.</p>
+                <button id="btn-calib-zero" class="ds-button ds-button--secondary ds-button--sm" disabled>Capture Zero</button>
+              </div>
+              <div id="step-2" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+                <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">2. Boundary Sweep</h4>
+                <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Rotate stick 360° along outer edge.</p>
+                <button id="btn-calib-sweep" class="ds-button ds-button--secondary ds-button--sm" disabled>Start Sweep Recording</button>
+              </div>
+              <div id="step-3" class="ds-slider" style="width: 100%; padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+                <div class="ds-slider__meta">
+                  <span class="ds-slider__label">3. Deadband Filter</span>
+                  <span id="val-deadband" class="ds-slider__value">3%</span>
+                </div>
+                <input type="range" id="input-deadband" class="ds-slider__input" min="0" max="15" value="3" />
+              </div>
+              <div id="step-4" style="padding: 12px; background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); opacity: 0.6;">
+                <h4 style="margin: 0 0 4px 0; font-size: var(--font-size-sm);">4. Apply Calibration</h4>
+                <p style="margin: 0 0 8px 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">Save computed parameters.</p>
+                <button id="btn-calib-save" class="ds-button ds-button--secondary ds-button--sm" disabled>Apply Calibration</button>
+              </div>
+            </div>
+          </div>
 
-  </div>
-</div>
-    <!-- VIEW 4: NVRAM MEMORY SETTINGS -->
-    <div id="view-memory" class="view">
-      <div class="ds-card ds-card--pad-md" style="width: 100%; margin-bottom: 16px;">
-        <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
-          <div class="ds-field">
-            <label class="ds-field__label" for="nvram-addr">Address (Register)</label>
-            <input type="text" id="nvram-addr" class="ds-field__input" placeholder="0x00 or 0" disabled />
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div class="ds-card ds-card--pad-md" style="width: 100%;">
+              <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 style="margin: 0; font-size: var(--font-size-sm);">Magnetic Motion Trace (Bx vs By)</h3>
+                <button id="btn-clear-plot" class="ds-button ds-button--secondary ds-button--sm">Clear Plot</button>
+              </div>
+              <div style="background: var(--color-surface); padding: 16px; border-radius: 3px; border: 1px solid var(--color-border); display: flex; justify-content: center; align-items: center; width: 100%;">
+                <canvas id="calib-canvas" width="300" height="300" style="display: block;"></canvas>
+              </div>
+            </div>
+            <div class="ds-card ds-card--pad-md" style="width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); text-align: center;">
+              <div><span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset X</span><div id="telem-off-x" style="font-weight: bold; color: var(--color-accent);">0</div></div>
+              <div><span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Offset Y</span><div id="telem-off-y" style="font-weight: bold; color: var(--color-accent);">0</div></div>
+              <div><span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Span</span><div id="telem-span" style="font-weight: bold; color: var(--color-accent);">0</div></div>
+              <div><span style="font-size: var(--font-size-xs); color: var(--color-ink-muted); text-transform: uppercase;">Status</span><div id="telem-status" style="font-weight: bold; color: var(--color-warning);">Uncalibrated</div></div>
+            </div>
           </div>
-          <div class="ds-field">
-            <label class="ds-field__label" for="nvram-val">Value (16-bit Word)</label>
-            <input type="text" id="nvram-val" class="ds-field__input" placeholder="0x0000 or 0" disabled />
+        </div>
+      </div>
+
+      <!-- SUB-VIEW: NVRAM MEMORY SETTINGS -->
+      <div id="view-memory" class="view">
+        <div class="ds-card ds-card--pad-md" style="width: 100%; margin-bottom: 16px;">
+          <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+            <div class="ds-field">
+              <label class="ds-field__label" for="nvram-addr">Address (Register)</label>
+              <input type="text" id="nvram-addr" class="ds-field__input" placeholder="0x00 or 0" disabled />
+            </div>
+            <div class="ds-field">
+              <label class="ds-field__label" for="nvram-val">Value (16-bit Word)</label>
+              <input type="text" id="nvram-val" class="ds-field__input" placeholder="0x0000 or 0" disabled />
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button id="btn-nvram-read" class="ds-button ds-button--primary ds-button--md" disabled>Read</button>
+              <button id="btn-nvram-write" class="ds-button ds-button--primary ds-button--md" disabled>Write</button>
+            </div>
           </div>
+          <hr class="ds-divider" />
           <div style="display: flex; gap: 8px;">
-            <button id="btn-nvram-read" class="ds-button ds-button--primary ds-button--md" disabled>Read</button>
-            <button id="btn-nvram-write" class="ds-button ds-button--primary ds-button--md" disabled>Write</button>
+            <button id="btn-nvram-dump" class="ds-button ds-button--secondary ds-button--sm" disabled>Dump All Regs</button>
+            <button id="btn-nvram-hs" class="ds-button ds-button--secondary ds-button--sm" disabled>Store (HS)</button>
+            <button id="btn-nvram-hr" class="ds-button ds-button--secondary ds-button--sm" disabled>Recall (HR)</button>
           </div>
         </div>
-
-        <hr class="ds-divider" />
-
-        <div style="display: flex; gap: 8px;">
-          <button id="btn-nvram-dump" class="ds-button ds-button--secondary ds-button--sm" disabled>Dump All Regs</button>
-          <button id="btn-nvram-hs" class="ds-button ds-button--secondary ds-button--sm" disabled>Store (HS)</button>
-          <button id="btn-nvram-hr" class="ds-button ds-button--secondary ds-button--sm" disabled>Recall (HR)</button>
-        </div>
-      </div>
-
-      <div class="ds-table-wrap" style="width: 100%;">
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
-          <h3 style="margin: 0; font-size: var(--font-size-md);">Register Map (0x00 - 0x3F)</h3>
-          <span id="mem-status-badge" class="ds-badge ds-badge--accent">Ready</span>
-        </div>
-        <div style="max-height: 360px; overflow-y: auto;">
-          <table class="ds-table">
-            <thead>
-              <tr>
-                <th class="ds-table__th">Reg (Hex)</th>
-                <th class="ds-table__th">Reg (Dec)</th>
-                <th class="ds-table__th">Value (Hex)</th>
-                <th class="ds-table__th">Value (Dec)</th>
-                <th class="ds-table__th">Status</th>
-              </tr>
-            </thead>
-            <tbody id="nvram-table-body">
-              <!-- Rows dynamically generated by app.js -->
-            </tbody>
-          </table>
+        <div class="ds-table-wrap" style="width: 100%;">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
+            <h3 style="margin: 0; font-size: var(--font-size-md);">Register Map (0x00 - 0x3F)</h3>
+            <span id="mem-status-badge" class="ds-badge ds-badge--accent">Ready</span>
+          </div>
+          <div style="max-height: 360px; overflow-y: auto;">
+            <table class="ds-table">
+              <thead>
+                <tr>
+                  <th class="ds-table__th">Reg (Hex)</th>
+                  <th class="ds-table__th">Reg (Dec)</th>
+                  <th class="ds-table__th">Value (Hex)</th>
+                  <th class="ds-table__th">Value (Dec)</th>
+                  <th class="ds-table__th">Status</th>
+                </tr>
+              </thead>
+              <tbody id="nvram-table-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- CONNECT WINDOW MODAL -->
+    <!-- POLYMORPHIC HARDWARE CONNECT MODAL -->
     <div id="connect-modal" class="ds-modal-root hidden">
       <div class="ds-modal__backdrop"></div>
       <div class="ds-modal">
@@ -371,15 +564,33 @@
           <button id="btn-close-modal" class="ds-modal__close">✕</button>
         </div>
         <div class="ds-modal__body">
-          <div class="ds-field" style="width: 100%; margin-bottom: 16px;">
-            <label class="ds-field__label" for="sel-conn-type">Connection Bus Type</label>
+          <div class="ds-field" style="width: 100%; margin-bottom: 12px;">
+            <label class="ds-field__label" for="sel-driver-type">Target Device Driver</label>
+            <select id="sel-driver-type" class="ds-field__input">
+              <option value="scpi" selected>SCPI Bridge (MLX90396 SPI API)</option>
+              <option value="arduino">Direct Arduino Telemetry (CSV Stream)</option>
+            </select>
+          </div>
+
+          <div class="ds-field" style="width: 100%; margin-bottom: 12px;">
+            <label class="ds-field__label" for="sel-baud-rate">Serial Baud Rate</label>
+            <select id="sel-baud-rate" class="ds-field__input">
+              <option value="115200" selected>115200</option>
+              <option value="230400">230400</option>
+              <option value="500000">500000</option>
+              <option value="9600">9600</option>
+            </select>
+          </div>
+
+          <div class="ds-field" id="wrap-conn-type" style="width: 100%; margin-bottom: 16px;">
+            <label class="ds-field__label" for="sel-conn-type">SPI Bus Type (SCPI Mode)</label>
             <select id="sel-conn-type" class="ds-field__input">
               <option value=":SPI">Cable Connection (:SPI)</option>
               <option value=":SPI2">Header Connection (:SPI2)</option>
             </select>
           </div>
           <p style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
-            Select your physical connection layout before opening the WebSerial COM port.
+            Choose your device driver and configuration before requesting the Web Serial COM port.
           </p>
         </div>
         <div class="ds-modal__footer">
@@ -389,6 +600,7 @@
     </div>
 
   </main>
+  
   <script type="module" src="app.js"></script>
 </body>
 </html>
