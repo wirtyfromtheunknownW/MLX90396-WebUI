@@ -8,6 +8,7 @@ let autoPattern = true;
 let coilActive = false;
 let animTime = 0;
 let joyX = 0, joyY = 0, joyZ = 0;
+let isLiveHardwareConnected = false;
 let sens = [1.0, 1.0, 1.0, 1.0];
 let stdTraceHistory = [];
 let mlxTraceHistory = [];
@@ -15,6 +16,15 @@ let mlxTraceHistory = [];
 let mainSceneObj = null;
 let stdPlot = null;
 let mlxPlot = null;
+let joyAssemblyRef = null;
+
+// Call this function whenever real sensor data arrives from app.js
+export function updateSfiDomeKinematics(x, y, z) {
+  isLiveHardwareConnected = true;
+  joyX = Math.max(-1, Math.min(1, x));
+  joyY = Math.max(-1, Math.min(1, y));
+  joyZ = Math.max(-1, Math.min(1, z));
+}
 
 export function initSfiDemo() {
   const container = document.getElementById('canvas3d-container');
@@ -52,15 +62,6 @@ export function initSfiDemo() {
     stdTraceHistory = [];
     mlxTraceHistory = [];
     resetPlotLines();
-  });
-
-  [0, 1, 2, 3].forEach(idx => {
-    const slider = document.getElementById(`sens-p${idx}`);
-    const lbl = document.getElementById(`p${idx}-sens-lbl`);
-    slider?.addEventListener('input', (e) => {
-      sens[idx] = parseFloat(e.target.value);
-      if (lbl) lbl.innerText = sens[idx].toFixed(2) + 'x';
-    });
   });
 
   // --- MAIN 3D SCENE SETUP ---
@@ -127,30 +128,10 @@ export function initSfiDemo() {
   pin1Dot.position.set(-0.6, 0.59, -0.6);
   scene.add(pin1Dot);
 
-  // 4 Hall Pixels (P0: BR, P1: TR, P2: TL, P3: BL)
-  const cornerOffset = 0.62;
-  const pCoords = [
-    [cornerOffset, cornerOffset],
-    [cornerOffset, -cornerOffset],
-    [-cornerOffset, -cornerOffset],
-    [-cornerOffset, cornerOffset]
-  ];
-  const pColors = [0x00ff88, 0x00d2ff, 0xa855f7, 0xd97706];
-  const pixelMeshes = [];
-  const pixelMats = [];
-
-  pCoords.forEach((pt, i) => {
-    const mat = new THREE.MeshStandardMaterial({ color: pColors[i], emissive: pColors[i], emissiveIntensity: 0.2 });
-    const pxMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 16), mat);
-    pxMesh.position.set(pt[0], 0.58, pt[1]);
-    scene.add(pxMesh);
-    pixelMeshes.push(pxMesh);
-    pixelMats.push(mat);
-  });
-
   // Joystick Assembly
   const domeRadius = 5.2;
   const joyAssembly = new THREE.Group();
+  joyAssemblyRef = joyAssembly;
 
   // Axial Magnet Disc
   const axialMagnetGroup = new THREE.Group();
@@ -247,31 +228,31 @@ export function initSfiDemo() {
   stdPlot = create3DFieldPlot('canvas3d-std-plot', 0xff3366);
   mlxPlot = create3DFieldPlot('canvas3d-mlx-plot', 0x00ff88);
 
-  // --- Animation Loop ---
-  function animate() {
-    requestAnimationFrame(animate);
+// In animate(), skip synthetic auto-pattern math when live hardware is providing real data
+function animate() {
+  requestAnimationFrame(animate);
 
-    if (autoPattern) {
-      animTime += 0.025;
-      let cycle = (animTime % 24) / 24;
+  if (autoPattern && !isLiveHardwareConnected) {
+    animTime += 0.025;
+    let cycle = (animTime % 24) / 24;
 
-      if (cycle < 0.25) {
-        let t = (cycle / 0.25) * Math.PI * 2;
-        joyX = Math.cos(t) * 0.85; joyY = Math.sin(t) * 0.85; joyZ = 0;
-      } else if (cycle < 0.50) {
-        let t = ((cycle - 0.25) / 0.25) * Math.PI * 4;
-        if (Math.sin(t) > 0) { joyX = Math.sin(t * 2) * 0.9; joyY = 0; }
-        else { joyX = 0; joyY = Math.cos(t * 2) * 0.9; }
-        joyZ = 0;
-      } else if (cycle < 0.75) {
-        joyX = Math.sin(animTime * 2) * 0.25; joyY = Math.cos(animTime * 2) * 0.25;
-        joyZ = Math.sin((cycle - 0.50) * Math.PI * 8) * 0.8;
-      } else {
-        joyX = Math.sin(animTime * 1.7) * 0.75 + Math.cos(animTime * 0.5) * 0.2;
-        joyY = Math.cos(animTime * 1.3) * 0.75 + Math.sin(animTime * 0.7) * 0.2;
-        joyZ = Math.sin(animTime * 2.5) * 0.4;
-      }
+    if (cycle < 0.25) {
+      let t = (cycle / 0.25) * Math.PI * 2;
+      joyX = Math.cos(t) * 0.85; joyY = Math.sin(t) * 0.85; joyZ = 0;
+    } else if (cycle < 0.50) {
+      let t = ((cycle - 0.25) / 0.25) * Math.PI * 4;
+      if (Math.sin(t) > 0) { joyX = Math.sin(t * 2) * 0.9; joyY = 0; }
+      else { joyX = 0; joyY = Math.cos(t * 2) * 0.9; }
+      joyZ = 0;
+    } else if (cycle < 0.75) {
+      joyX = Math.sin(animTime * 2) * 0.25; joyY = Math.cos(animTime * 2) * 0.25;
+      joyZ = Math.sin((cycle - 0.50) * Math.PI * 8) * 0.8;
+    } else {
+      joyX = Math.sin(animTime * 1.7) * 0.75 + Math.cos(animTime * 0.5) * 0.2;
+      joyY = Math.cos(animTime * 1.3) * 0.75 + Math.sin(animTime * 0.7) * 0.2;
+      joyZ = Math.sin(animTime * 2.5) * 0.4;
     }
+  }
 
     // Kinematics along Dome
     let tiltAngle = Math.sqrt(joyX * joyX + joyY * joyY) * 0.45;
@@ -313,21 +294,6 @@ export function initSfiDemo() {
         by: (pSignals[i].by + noiseY) * sens[i],
         bz: (pSignals[i].bz + noiseZ) * sens[i]
       });
-
-      let totalMag = Math.sqrt(pMeasured[i].bx ** 2 + pMeasured[i].by ** 2 + pMeasured[i].bz ** 2);
-      let intensity = Math.min(1.0, totalMag / 30.0);
-      pixelMats[i].emissiveIntensity = 0.2 + intensity * 0.8;
-      pixelMeshes[i].scale.set(1 + intensity * 0.3, 1, 1 + intensity * 0.3);
-
-      const card = document.getElementById(`px-card-${i}`);
-      if (card) card.style.borderColor = intensity > 0.6 ? 'var(--accent-green, #00ff88)' : 'var(--card-border, #1e293b)';
-      
-      const elBx = document.getElementById(`p${i}-bx`);
-      const elBy = document.getElementById(`p${i}-by`);
-      const elBz = document.getElementById(`p${i}-bz`);
-      if (elBx) elBx.innerText = pMeasured[i].bx.toFixed(1);
-      if (elBy) elBy.innerText = pMeasured[i].by.toFixed(1);
-      if (elBz) elBz.innerText = pMeasured[i].bz.toFixed(1);
     }
 
     let stdBx = pMeasured[0].bx, stdBy = pMeasured[0].by, stdBz = pMeasured[0].bz;

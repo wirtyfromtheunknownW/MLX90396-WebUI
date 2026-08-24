@@ -1,6 +1,7 @@
 import { MLX90396_API } from './mlx_api.js';
 import { Arduino_API } from './arduino_api.js';
-import { initSfiDemo, resizeSfiCanvases } from './sfi_demo.js';
+// import { initSfiDemo, resizeSfiCanvases } from './sfi_demo.js';
+import { initSfiDemo, resizeSfiCanvases, updateSfiDomeKinematics } from './sfi_demo.js';
 
 // --- DOM Elements (Declared first to avoid TDZ ReferenceErrors) ---
 const btnConnect = document.getElementById('btn-connect');
@@ -63,7 +64,68 @@ window.addEventListener('DOMContentLoaded', () => {
   initJoystickLEDs();
   initDeviceCommandButtons();
   initNvramControls();
+  initGridReordering();
 });
+
+// --- Drag & Drop Reordering logic ---
+function initGridReordering() {
+  const makeReorderable = (containerId, selector) => {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    let dragged = null;
+
+    container.addEventListener('dragstart', (e) => {
+      // Prevent drag from triggering when adjusting inputs or sliders
+      if (['INPUT', 'BUTTON', 'LABEL', 'SELECT'].includes(e.target.tagName)) {
+        e.preventDefault();
+        return;
+      }
+
+      const card = e.target.closest(selector);
+      if (!card) return;
+
+      dragged = card;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => card.classList.add('is-dragging'), 0);
+    });
+
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+
+      const target = e.target.closest(selector);
+      if (!target || target === dragged || target.parentNode !== container) return;
+
+      const items = Array.from(container.children);
+      const draggedIndex = items.indexOf(dragged);
+      const targetIndex = items.indexOf(target);
+
+      if (draggedIndex < targetIndex) {
+        container.insertBefore(dragged, target.nextSibling);
+      } else {
+        container.insertBefore(dragged, target);
+      }
+
+      if (typeof resizeSfiCanvases === 'function') {
+        resizeSfiCanvases();
+      }
+    });
+
+    container.addEventListener('dragend', () => {
+      if (dragged) {
+        dragged.classList.remove('is-dragging');
+        dragged = null;
+      }
+      if (typeof resizeSfiCanvases === 'function') {
+        resizeSfiCanvases();
+      }
+    });
+  };
+
+  makeReorderable('pixels-grid', '.pixel-card');
+  makeReorderable('sfi-dashboard-grid', '.draggable-card');
+}
 
 // --- Helper: SPI Bus Prefix ---
 function getSpiPrefix() {
@@ -584,9 +646,13 @@ async function runJoystickDemo() {
             }
           }
 
+          // Live UI Updates (Placed INSIDE loop after data is read)
           updateMagnetUI(posX_mm, posY_mm, angleDeg);
           updateJoystickUI(rawX / 20, rawY / 20); 
           update3DVectorPlot(rawX, rawY, rawZ);
+          
+          // Send real normalized telemetry directly to the SFI Dome
+          updateSfiDomeKinematics(rawX / 1000, rawY / 1000, rawZ / 1000);
 
           await new Promise(r => setTimeout(r, currentDriverType === 'scpi' ? 50 : 25));
         } catch (loopErr) {
@@ -612,6 +678,9 @@ async function runJoystickDemo() {
       updateMagnetUI(emulatedX, emulatedY, emulatedAngle);
       updateJoystickUI(emulatedX * 20, emulatedY * 20);
       update3DVectorPlot(Math.cos(angle) * 500, Math.sin(angle) * 500, 200);
+
+      // Drive SFI Dome in emulation mode as well
+      updateSfiDomeKinematics(emulatedX / 2, emulatedY / 2, 0);
 
       await new Promise(r => setTimeout(r, 33)); 
     }

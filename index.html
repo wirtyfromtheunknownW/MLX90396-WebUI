@@ -55,11 +55,18 @@
       border: 1px solid var(--color-border); margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
     }
     .sfi-dashboard-grid {
-      display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 16px;
+      display: flex;
+      justify-content: center;
+      width: 100%;
+      margin-bottom: 16px;
     }
-    @media (max-width: 768px) { .sfi-dashboard-grid { grid-template-columns: 1fr; } }
+    .sfi-dome-card {
+      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+    }
     #canvas3d-container {
-      width: 100%; height: 360px; border-radius: 8px; overflow: hidden;
+      width: 100%; height: 500px; border-radius: 8px; overflow: hidden;
       background: #ffffff; position: relative; cursor: grab;
     }
     #canvas3d-container:active { cursor: grabbing; }
@@ -67,13 +74,6 @@
       position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.85);
       padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #ffffff; pointer-events: none;
     }
-    .pixels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .pixel-card { background: #070d1a; border: 1px solid var(--color-border); border-radius: 6px; padding: 10px; }
-    .pixel-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: #00ff88; margin-bottom: 4px; }
-    .pixel-val-row { display: flex; justify-content: space-between; font-size: 10px; font-family: monospace; color: var(--color-ink-muted); }
-    .slider-group { margin-top: 6px; }
-    .slider-group label { display: flex; justify-content: space-between; font-size: 10px; color: var(--color-ink-muted); }
-    .slider-group input { width: 100%; height: 4px; accent-color: #00d2ff; }
     .battle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
     @media (max-width: 768px) { .battle-grid { grid-template-columns: 1fr; } }
     .battle-box { background: #070d1d; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; text-align: center; }
@@ -83,6 +83,28 @@
     .data-readout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; font-size: 11px; font-family: monospace; }
     .data-cell { background: #111a2e; padding: 6px; border-radius: 4px; }
     .data-label { color: var(--color-ink-muted); font-size: 9px; }
+
+    /* --- DRAG AND DROP REORDERING STYLES --- */
+    .draggable-card {
+      cursor: grab;
+      user-select: none;
+      transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+    }
+    .draggable-card:active {
+      cursor: grabbing;
+    }
+    .draggable-card.is-dragging {
+      opacity: 0.35;
+      transform: scale(0.97);
+      border: 1.5px dashed var(--color-accent, #00d2ff) !important;
+    }
+    .drag-handle {
+      cursor: grab;
+      font-size: 12px;
+      color: var(--color-ink-muted);
+      margin-right: 6px;
+      user-select: none;
+    }
 
     /* --- 3D JOYSTICK --- */
     .joystick-wrapper {
@@ -219,68 +241,25 @@
           <button class="ds-button ds-button--secondary ds-button--sm" id="btn-reset-trace">🧹 Clear Trajectories</button>
         </div>
         <span style="font-size: 11px; color: var(--color-ink-muted);" id="pattern-phase-txt">
-          Axially Magnetized Disc | Dynamic 4-Pixel Sensing
+          Axially Magnetized Disc | Dynamic Field Kinematics
         </span>
       </div>
 
-      <div class="sfi-dashboard-grid">
-        <!-- CARD 1: 3D Viewport -->
-        <div class="ds-card ds-card--pad-md" style="display: flex; flex-direction: column;">
+      <div class="sfi-dashboard-grid" id="sfi-dashboard-grid">
+        <!-- CENTERED & ENLARGED DOME CARD -->
+        <div class="ds-card ds-card--pad-md draggable-card sfi-dome-card" draggable="true" style="display: flex; flex-direction: column;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);">Dome Kinematics</span>
+            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);"><span class="drag-handle">⣿</span> Dome Kinematics</span>
             <span style="font-size: 11px; color: var(--color-accent);" id="joy-pos-text">Tilt X: 0.0° | Tilt Y: 0.0° | Press Z: 0.0 mm</span>
           </div>
           <div id="canvas3d-container">
             <div class="hint-overlay">Left Click: Orbit | Drag Handle: Move Joystick Across Dome</div>
           </div>
         </div>
-
-        <!-- CARD 2: 4-Pixel Sensing Grid -->
-        <div class="ds-card ds-card--pad-md">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);">Hall Pixels (d = 1.1 mm)</span>
-            <span style="font-size: 10px; color: #a855f7;">Dynamic Response</span>
-          </div>
-          
-          <div class="pixels-grid">
-            <div class="pixel-card" id="px-card-0">
-              <div class="pixel-head"><span>P0 (BR)</span><span id="p0-status">1.0x</span></div>
-              <div class="pixel-val-row"><span>Bx:<b id="p0-bx">0.0</b></span><span>By:<b id="p0-by">0.0</b></span><span>Bz:<b id="p0-bz">0.0</b></span></div>
-              <div class="slider-group">
-                <label><span>Gain</span><span id="p0-sens-lbl">1.00x</span></label>
-                <input type="range" id="sens-p0" min="0.5" max="1.5" step="0.05" value="1.0">
-              </div>
-            </div>
-            <div class="pixel-card" id="px-card-1">
-              <div class="pixel-head"><span>P1 (TR)</span><span id="p1-status">1.0x</span></div>
-              <div class="pixel-val-row"><span>Bx:<b id="p1-bx">0.0</b></span><span>By:<b id="p1-by">0.0</b></span><span>Bz:<b id="p1-bz">0.0</b></span></div>
-              <div class="slider-group">
-                <label><span>Gain</span><span id="p1-sens-lbl">1.00x</span></label>
-                <input type="range" id="sens-p1" min="0.5" max="1.5" step="0.05" value="1.0">
-              </div>
-            </div>
-            <div class="pixel-card" id="px-card-2">
-              <div class="pixel-head"><span>P2 (TL)</span><span id="p2-status">1.0x</span></div>
-              <div class="pixel-val-row"><span>Bx:<b id="p2-bx">0.0</b></span><span>By:<b id="p2-by">0.0</b></span><span>Bz:<b id="p2-bz">0.0</b></span></div>
-              <div class="slider-group">
-                <label><span>Gain</span><span id="p2-sens-lbl">1.00x</span></label>
-                <input type="range" id="sens-p2" min="0.5" max="1.5" step="0.05" value="1.0">
-              </div>
-            </div>
-            <div class="pixel-card" id="px-card-3">
-              <div class="pixel-head"><span>P3 (BL)</span><span id="p3-status">1.0x</span></div>
-              <div class="pixel-val-row"><span>Bx:<b id="p3-bx">0.0</b></span><span>By:<b id="p3-by">0.0</b></span><span>Bz:<b id="p3-bz">0.0</b></span></div>
-              <div class="slider-group">
-                <label><span>Gain</span><span id="p3-sens-lbl">1.00x</span></label>
-                <input type="range" id="sens-p3" min="0.5" max="1.5" step="0.05" value="1.0">
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
-      <!-- CARD 3: Battle Comparison -->
-      <div class="ds-card ds-card--pad-md" style="margin-bottom: 16px;">
+      <!-- CARD 2: BATTLE COMPARISON PLOTS (LOCATED DIRECTLY BELOW THE DOME) -->
+      <div class="ds-card ds-card--pad-md draggable-card" draggable="true" style="margin-bottom: 16px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-warning);">⚡ Standard 3D Hall vs MLX90396 Differential Stray Field Immunity</span>
           <span style="font-size: 11px; color: var(--color-ink-muted);" id="coil-readout-lbl">Coil Status: INACTIVE (0 mT)</span>
@@ -577,7 +556,7 @@
             <select id="sel-baud-rate" class="ds-field__input">
               <option value="115200" selected>115200</option>
               <option value="230400">230400</option>
-              <option value="500000">500000</option>
+              <option value="500000">500000</option>  
               <option value="9600">9600</option>
             </select>
           </div>
