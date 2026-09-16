@@ -42,6 +42,35 @@
       padding-bottom: 16px;
     }
 
+    .demo-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .demo-menu-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: var(--color-surface, #111827);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 10px 16px;
+      margin-bottom: 16px;
+    }
+    .demo-status {
+      font-size: 11px;
+      color: var(--color-ink-muted);
+      font-family: ui-monospace, Consolas, monospace;
+      margin-left: 8px;
+      border: 1px solid var(--color-border);
+      padding: 4px 10px;
+      border-radius: var(--radius-sm, 4px);
+      background: var(--color-surface, #111827);
+    }
+    .demo-status.active { color: var(--color-accent); }
+
     /* Top-Level Demo & Sub-Tab View Switching */
     .demo-view { display: none; }
     .demo-view.active { display: block; }
@@ -169,13 +198,13 @@
 
     /* --- 2D SQUARE KNOB MECHANICS --- */
     .magnet-plane {
-      position: relative; width: 100%; max-width: 450px; height: 450px;
-      background: #6DB3A1; display: flex; justify-content: center; align-items: center;
-      margin: 0 auto; border-radius: 8px; color: white; font-family: sans-serif;
-      overflow: hidden; border: 3px dashed #3D7365; 
+      position: relative; width: 100%; height: 700px;
+      background: rgba(0, 0, 0, 0); display: flex; justify-content: center; align-items: center;
+      margin: 0; border-radius: 8px; color: white; font-family: sans-serif;
+      overflow: hidden;
     }
     .magnet-sensor {
-      width: 150px; height: 150px; background: #0B2C40; border-radius: 6px;
+      width: 340px; height: 340px; background: #0B2C40; border-radius: 6px;
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4); overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.15);
@@ -191,7 +220,7 @@
       display: flex; align-items: center; justify-content: center;
       transform-origin: 50% 50%; box-sizing: border-box; border: 4px solid #1A1F26;
       box-shadow: 0 8px 20px rgba(0,0,0,0.6), inset 0 0 0 3px rgba(255,255,255,0.2);
-      z-index: 10;
+      z-index: 10; opacity: 0.8;
     }
     .magnet-pole {
       flex: 1; text-align: center; font-weight: 800; font-size: 1.3rem;
@@ -221,84 +250,35 @@
 <body>
   <main class="app-shell">
 
-    <!-- TOP HEADER ROW: 2 MAIN DEMO TABS & CONNECT BUTTON -->
+    <!-- TOP: MAIN DEMO TAB -->
     <div class="header-row">
       <div class="ds-tabs" style="margin-bottom: 0;">
         <div class="ds-tabs__list">
-          <button class="ds-tabs__tab demo-tab-btn" data-target="demo-sfi">SFI Joystick</button>
           <button class="ds-tabs__tab ds-tabs__tab--active demo-tab-btn" data-target="demo-jwt">JWT demo</button>
         </div>
+      </div>
+    </div>
+
+    <!-- DEMO CONTROL MENU (GROUPED UNDER THE TAB) -->
+    <div class="demo-menu-bar">
+      <div class="demo-controls">
+        <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
+        <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
+        <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
+        <span id="demo-status" class="demo-status">Idle</span>
       </div>
       <button id="btn-connect" class="ds-button ds-button--primary ds-button--md">Connect USB</button>
     </div>
 
-    <!-- MAIN TAB 1: SFI JOYSTICK -->
-    <div id="demo-sfi" class="demo-view">
-      <div class="sfi-controls-bar">
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button class="ds-button ds-button--primary ds-button--sm" id="btn-pattern">🔄 Full Pattern Motion</button>
-          <button class="ds-button ds-button--danger ds-button--sm" id="btn-coil">⚡ Stray Field Coil (5 mT)</button>
-          <button class="ds-button ds-button--secondary ds-button--sm" id="btn-reset-trace">🧹 Clear Trajectories</button>
-        </div>
-        <span style="font-size: 11px; color: var(--color-ink-muted);" id="pattern-phase-txt">
-          Axially Magnetized Disc | Dynamic Field Kinematics
-        </span>
-      </div>
+    <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-bottom: 16px; width: 100%;"></div>
 
-      <div class="sfi-dashboard-grid" id="sfi-dashboard-grid">
-        <!-- CENTERED & ENLARGED DOME CARD -->
-        <div class="ds-card ds-card--pad-md draggable-card sfi-dome-card" draggable="true" style="display: flex; flex-direction: column;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted);"><span class="drag-handle">⣿</span> Dome Kinematics</span>
-            <span style="font-size: 11px; color: var(--color-accent);" id="joy-pos-text">Tilt X: 0.0° | Tilt Y: 0.0° | Press Z: 0.0 mm</span>
-          </div>
-          <div id="canvas3d-container">
-            <div class="hint-overlay">Left Click: Orbit | Drag Handle: Move Joystick Across Dome</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CARD 2: BATTLE COMPARISON PLOTS (LOCATED DIRECTLY BELOW THE DOME) -->
-      <div class="ds-card ds-card--pad-md draggable-card" draggable="true" style="margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-warning);">⚡ Standard 3D Hall vs MLX90396 Differential Stray Field Immunity</span>
-          <span style="font-size: 11px; color: var(--color-ink-muted);" id="coil-readout-lbl">Coil Status: INACTIVE (0 mT)</span>
-        </div>
-
-        <div class="battle-grid">
-          <div class="battle-box fail">
-            <div style="font-size: 11px; font-weight: 800; color: #ff3366;">STANDARD 3D HALL SENSOR</div>
-            <div class="plot3d-canvas" id="canvas3d-std-plot"></div>
-            <div class="data-readout">
-              <div class="data-cell"><div class="data-label">Measured Bx</div><span id="std-read-bx" style="color:#ff3366">0.0 mT</span></div>
-              <div class="data-cell"><div class="data-label">Measured By</div><span id="std-read-by" style="color:#ff3366">0.0 mT</span></div>
-              <div class="data-cell"><div class="data-label">Measured Bz</div><span id="std-read-bz" style="color:#ff3366">0.0 mT</span></div>
-            </div>
-          </div>
-
-          <div class="battle-box pass">
-            <div style="font-size: 11px; font-weight: 800; color: #00ff88;">MLX90396 SFI DIFFERENTIAL</div>
-            <div class="plot3d-canvas" id="canvas3d-mlx-plot"></div>
-            <div class="data-readout">
-              <div class="data-cell"><div class="data-label">Diff ΔBx (P13)</div><span id="mlx-read-dbx" style="color:#00ff88">0.0 mT</span></div>
-              <div class="data-cell"><div class="data-label">Diff ΔBy (P02)</div><span id="mlx-read-dby" style="color:#00ff88">0.0 mT</span></div>
-              <div class="data-cell"><div class="data-label">Diff ΔBz (P02)</div><span id="mlx-read-dbz" style="color:#00ff88">0.0 mT</span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- MAIN TAB 2: JWT DEMO -->
+    <!-- MAIN TAB: JWT DEMO -->
     <div id="demo-jwt" class="demo-view active">
       <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
         <div class="ds-tabs__list">
           <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick</button>
           <button class="ds-tabs__tab tab-btn" data-target="view-magnet">2D Magnet</button>
           <button class="ds-tabs__tab tab-btn" data-target="view-3dplot">3D Plot</button> 
-          <button class="ds-tabs__tab tab-btn" data-target="view-terminal">Terminal</button>
-          <button class="ds-tabs__tab tab-btn" data-target="view-calib">Calibration</button>
-          <button class="ds-tabs__tab tab-btn" data-target="view-memory">NVRAM</button>
         </div>
       </div>
 
@@ -308,8 +288,8 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
             <div>
               <h3 style="margin: 0; font-size: var(--font-size-md);">Diametrical Magnet Orientation</h3>
-              <p style="margin: 4px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
-                Travel Area: &plusmn;2.5 mm (&plusmn;75 px). South Pole (Red) tracks magnetic orientation.
+              <p id="magnet-travel-lbl" style="margin: 4px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+                Travel Area: &plusmn;2.5 mm (&plusmn;170 px). South Pole (Red) tracks magnetic orientation.
               </p>
             </div>
             <button id="btn-zero-magnet" class="ds-button ds-button--secondary ds-button--sm">Zero Position</button>
@@ -325,33 +305,41 @@
             <div class="magnet-sensor">
               <svg class="sensor-grid" viewBox="-75 -75 150 150">
                 <defs>
-                  <pattern id="grid-1mm" width="30" height="30" patternUnits="userSpaceOnUse" x="-75" y="-75">
-                    <path d="M 30 0 L 0 0 0 30" fill="none" stroke="rgba(255, 255, 255, 0.07)" stroke-width="1" />
+                  <pattern id="grid-1mm" width="20" height="20" patternUnits="userSpaceOnUse" x="-75" y="-75">
+                    <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255, 255, 255, 0.09)" stroke-width="1" />
                   </pattern>
                 </defs>
                 <rect x="-75" y="-75" width="150" height="150" fill="url(#grid-1mm)" />
                 <line x1="-75" y1="0" x2="75" y2="0" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1.2" />
                 <line x1="0" y1="-75" x2="0" y2="75" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1.2" />
                 <line x1="-60" y1="-4" x2="-60" y2="4" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-45" y1="-3" x2="-45" y2="3" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
                 <line x1="-30" y1="-3" x2="-30" y2="3" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
                 <line x1="30" y1="-3" x2="30" y2="3" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="45" y1="-3" x2="45" y2="3" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
                 <line x1="60" y1="-4" x2="60" y2="4" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
                 <line x1="-4" y1="-60" x2="4" y2="-60" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-3" y1="-45" x2="3" y2="-45" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
                 <line x1="-3" y1="-30" x2="3" y2="-30" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
                 <line x1="-3" y1="30" x2="3" y2="30" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
+                <line x1="-3" y1="45" x2="3" y2="45" stroke="rgba(255, 255, 255, 0.5)" stroke-width="1" />
                 <line x1="-4" y1="60" x2="4" y2="60" stroke="rgba(255, 255, 255, 0.7)" stroke-width="1.2" />
-                <text x="-60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-2</text>
-                <text x="-30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-1</text>
-                <text x="30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+1</text>
-                <text x="60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+2</text>
-                <text x="6" y="-58" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+2</text>
-                <text x="6" y="-28" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+1</text>
-                <text x="6" y="32" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-1</text>
-                <text x="6" y="62" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-2</text>
-                <text x="-71" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
-                <text x="47" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
-                <text x="-71" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
-                <text x="47" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
+                <text class="grid-tick" data-mm="-2" x="-60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-2</text>
+                <text class="grid-tick" data-mm="-1.5" x="-45" y="13" fill="rgba(255, 255, 255, 0.45)" font-size="7" text-anchor="middle" font-family="monospace">-1.5</text>
+                <text class="grid-tick" data-mm="-1" x="-30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">-1</text>
+                <text class="grid-tick" data-mm="1" x="30" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+1</text>
+                <text class="grid-tick" data-mm="1.5" x="45" y="13" fill="rgba(255, 255, 255, 0.45)" font-size="7" text-anchor="middle" font-family="monospace">+1.5</text>
+                <text class="grid-tick" data-mm="2" x="60" y="13" fill="rgba(255, 255, 255, 0.65)" font-size="8" text-anchor="middle" font-family="monospace">+2</text>
+                <text class="grid-tick" data-mm="2" x="6" y="-58" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+2</text>
+                <text class="grid-tick" data-mm="1.5" x="6" y="-43" fill="rgba(255, 255, 255, 0.45)" font-size="7" alignment-baseline="middle" font-family="monospace">+1.5</text>
+                <text class="grid-tick" data-mm="1" x="6" y="-28" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">+1</text>
+                <text class="grid-tick" data-mm="-1" x="6" y="32" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-1</text>
+                <text class="grid-tick" data-mm="-1.5" x="6" y="47" fill="rgba(255, 255, 255, 0.45)" font-size="7" alignment-baseline="middle" font-family="monospace">-1.5</text>
+                <text class="grid-tick" data-mm="-2" x="6" y="62" fill="rgba(255, 255, 255, 0.65)" font-size="8" alignment-baseline="middle" font-family="monospace">-2</text>
+                <text class="grid-tick" data-mm="-2.5" x="-71" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
+                <text class="grid-tick" data-mm="2.5" x="47" y="-64" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
+                <text class="grid-tick" data-mm="-2.5" x="-71" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">-2.5</text>
+                <text class="grid-tick" data-mm="2.5" x="47" y="71" fill="#59FFB0" font-size="7.5" font-weight="bold" font-family="monospace">+2.5</text>
               </svg>
             </div>
             
@@ -371,7 +359,7 @@
             <button id="btn-reset-3d-trail" class="ds-button ds-button--secondary ds-button--sm">Reset Trail</button>
           </div>
           <div style="background: var(--color-surface); border-radius: 3px; border: 1px solid var(--color-border); padding: 8px;">
-            <div id="plot-3d-container" style="width: 100%; height: 460px;"></div>
+            <div id="plot-3d-container" style="width: 100%; height: 600px;"></div>
           </div>
         </div>
       </div>
@@ -385,18 +373,13 @@
             <div class="joystick__ball"></div>
           </div>
         </div>
-        
-        <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
-          <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
-          <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
-          <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
-        </div>
 
-        <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-top: 20px; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto;"></div>
-
-        <div style="margin-top: 24px; text-align: center;">
-          <h4 style="color: var(--color-ink-muted); margin-bottom: 12px; font-size: var(--font-size-sm); text-transform: uppercase;">Device Commands</h4>
-          <div id="api-test-buttons" style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 650px; margin: 0 auto;"></div>
+        <div style="display: flex; justify-content: center; margin-top: 20px;">
+          <div style="text-align: center;">
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 8px;">Radar Scope</div>
+            <canvas id="radar-canvas" width="340" height="340" style="display: block;"></canvas>
+            <div id="radar-readout" style="margin-top: 8px; font-size: 11px; font-family: ui-monospace, Consolas, monospace; color: var(--color-ink-muted);">Azimuth: 0.0° | Range: 0.0%</div>
+          </div>
         </div>
       </div>
 
@@ -547,7 +530,7 @@
             <label class="ds-field__label" for="sel-driver-type">Target Device Driver</label>
             <select id="sel-driver-type" class="ds-field__input">
               <option value="scpi" selected>SCPI Bridge (MLX90396 SPI API)</option>
-              <option value="arduino">Direct Arduino Telemetry (CSV Stream)</option>
+              <option value="arduino">Direct Arduino Telemetry (Frame Stream)</option>
             </select>
           </div>
 
@@ -571,6 +554,13 @@
           <p style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
             Choose your device driver and configuration before requesting the Web Serial COM port.
           </p>
+          <div class="ds-field" style="width: 100%; margin: 16px 0 0 0;">
+            <label class="ds-field__label">Browser-Authorized Ports</label>
+            <div id="port-guide" style="font-size: 12px; color: var(--color-ink-muted); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace;"></div>
+            <p style="margin: 8px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+              The Chrome port picker lists every serial device Windows detects (look for the Arduino VID <b>2341</b> or CH340 <b>1A86</b>). If yours is missing: install its USB driver, unplug &amp; replug, reboot, and close the Arduino IDE Serial Monitor if it's holding the port.
+            </p>
+          </div>
         </div>
         <div class="ds-modal__footer">
           <button id="btn-modal-connect" class="ds-button ds-button--primary ds-button--full">Open Serial Port</button>

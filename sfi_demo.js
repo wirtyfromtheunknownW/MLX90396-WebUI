@@ -232,6 +232,9 @@ export function initSfiDemo() {
 function animate() {
   requestAnimationFrame(animate);
 
+  const sfiView = document.getElementById('demo-sfi');
+  if (!sfiView || !sfiView.classList.contains('active')) return;
+
   if (autoPattern && !isLiveHardwareConnected) {
     animTime += 0.025;
     let cycle = (animTime % 24) / 24;

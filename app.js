@@ -16,7 +16,14 @@ const chkAutoScroll = document.getElementById('chk-autoscroll');
 
 const btnStartDemo = document.getElementById('btn-start-demo');
 const btnStopDemo = document.getElementById('btn-stop-demo');
+const demoStatus = document.getElementById('demo-status');
 const historyList = document.getElementById('history-list');
+
+function setDemoStatus(text, isActive) {
+  if (!demoStatus) return;
+  demoStatus.textContent = text;
+  demoStatus.classList.toggle('active', !!isActive);
+}
 
 // Modal Elements
 const selDriverType = document.getElementById('sel-driver-type');
@@ -26,6 +33,40 @@ const selBaudRate = document.getElementById('sel-baud-rate');
 const connectModal = document.getElementById('connect-modal');
 const btnModalConnect = document.getElementById('btn-modal-connect');
 const btnCloseModal = document.getElementById('btn-close-modal');
+const portGuideEl = document.getElementById('port-guide');
+
+const VID_NAMES = {
+  0x2341: 'Arduino (official)',
+  0x2a03: 'Arduino (official)',
+  0x1a86: 'CH340 (common clones)',
+  0x0403: 'FTDI',
+  0x10c4: 'CP210x (Silicon Labs)',
+  0x303a: 'Espressif ESP32',
+  0x03e9: 'Melexis',
+};
+
+async function refreshPortGuide() {
+  if (!portGuideEl || !navigator.serial || !navigator.serial.getPorts) return;
+  try {
+    const ports = await navigator.serial.getPorts();
+    if (!ports.length) {
+      portGuideEl.textContent = 'None yet \u2014 pick your device in the Open Serial Port dialog below.';
+      return;
+    }
+    portGuideEl.innerHTML = '';
+    ports.forEach((p, i) => {
+      const info = typeof p.getInfo === 'function' ? p.getInfo() : {};
+      const vid = info.usbVendorId;
+      const pid = info.usbProductId;
+      const name = vid != null ? (VID_NAMES[vid] || 'USB Serial Device') : 'Serial Port';
+      const row = document.createElement('div');
+      row.textContent = `${name}  \u00b7  VID ${vid != null ? '0x' + vid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'} \u00b7 PID ${pid != null ? '0x' + pid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'}`;
+      portGuideEl.appendChild(row);
+    });
+  } catch (err) {
+    portGuideEl.textContent = 'Unable to read authorized ports.';
+  }
+}
 
 // 2D Magnet & UI Elements
 const magnetDisk = document.getElementById('magnet-disk');
@@ -58,13 +99,19 @@ const leds = [];
 const TOTAL_LEDS = 28;
 const ANGLE_STEP = 360 / TOTAL_LEDS;
 
+function isViewActive(id) {
+  const el = document.getElementById(id);
+  return !!el && el.classList.contains('active');
+}
+
 // --- Initialize on Startup ---
 window.addEventListener('DOMContentLoaded', () => {
   initSfiDemo();
   initJoystickLEDs();
-  initDeviceCommandButtons();
+  startRadarLoop();
   initNvramControls();
   initGridReordering();
+  refreshPortGuide();
 });
 
 // --- Drag & Drop Reordering logic ---
@@ -166,63 +213,70 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// --- Dynamic Device Command Buttons ---
-function initDeviceCommandButtons() {
-  const container = document.getElementById('api-test-buttons');
-  if (!container) return;
+// --- 2D Magnet Position & UI ---
+const GRID_HALF_PX = 170; // magnet sensor is 340px = one full travel span
+const magnetState = { emaX: 0, emaY: 0, emaAngle: 0, peakX: 0, peakY: 0, inited: false };
 
-  const commands = [
-    { label: 'RT (Reset)', action: async () => { const res = await activeDevice.rt(); appendLog(`[API RT] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
-    { label: 'HS (Store NVRAM)', action: async () => { const res = await activeDevice.hs(); appendLog(`[API HS] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
-    { label: 'HR (Recall NVRAM)', action: async () => { const res = await activeDevice.hr(); appendLog(`[API HR] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
-    { label: 'SM (Start Meas)', action: async () => { const res = await activeDevice.sm(0xFC000); appendLog(`[API SM] Mask 0xFC000 Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
-    { label: 'RM (Read P0-1)', action: async () => { const res = await activeDevice.rm(false, 0xFC000); appendLog(`[API RM P0-1] ${JSON.stringify(res)}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
-    { label: 'RM (Read P2-3)', action: async () => { const res = await activeDevice.rm(false, 0x03F00); appendLog(`[API RM P2-3] ${JSON.stringify(res)}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
-    { label: 'EX (Exit Mode)', action: async () => { const res = await activeDevice.ex(0); appendLog(`[API EX] Result: ${res ? 'OK' : 'FAIL'}\n`, res ? 'log-okprompt' : 'log-badprompt'); } },
-    { label: 'RR Reg 0x00', action: async () => { const res = await activeDevice.rr(0x00); appendLog(`[API RR 0x00] Data: 0x${res.data?.toString(16).padStart(4, '0')}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } },
-    { label: 'RR Reg 0x02', action: async () => { const res = await activeDevice.rr(0x02); appendLog(`[API RR 0x02] Data: 0x${res.data?.toString(16).padStart(4, '0')}\n`, res.error ? 'log-badprompt' : 'log-okprompt'); } }
-  ];
+function resetMagnetTracking() {
+  magnetState.inited = false;
+  magnetState.peakX = 0;
+  magnetState.peakY = 0;
+  updateMagnetScaleLabels(2.5);
+}
 
-  container.innerHTML = '';
-  commands.forEach(cmd => {
-    const btn = document.createElement('button');
-    btn.className = 'ds-button ds-button--secondary ds-button--sm api-btn';
-    btn.textContent = cmd.label;
-    btn.disabled = !isConnected || currentDriverType === 'arduino';
-    btn.addEventListener('click', async () => {
-      if (!activeDevice || currentDriverType !== 'scpi') return;
-      try {
-        console.log(`[API EXEC] Running command: ${cmd.label}`);
-        await cmd.action();
-      } catch (err) {
-        console.error(`[API ERROR] ${cmd.label}:`, err);
-        appendLog(`[API ERROR]: ${err.message}\n`, 'log-badprompt');
-      }
-    });
-    container.appendChild(btn);
+function updateMagnetScaleLabels(mmRange) {
+  const travelLbl = document.getElementById('magnet-travel-lbl');
+  if (travelLbl) {
+    travelLbl.innerHTML = `Travel Area: &plusmn;${mmRange.toFixed(1)} mm (&plusmn;170 px). South Pole (Red) tracks magnetic orientation.`;
+  }
+  const factor = mmRange / 2.5;
+  document.querySelectorAll('.grid-tick').forEach(el => {
+    const base = parseFloat(el.dataset.mm || '0');
+    const v = base * factor;
+    const sign = base > 0 ? '+' : '';
+    const str = v === Math.round(v) ? v.toFixed(0) : v.toFixed(1);
+    el.textContent = sign + str;
   });
 }
 
-// --- 2D Magnet Position & UI ---
 btnZeroMagnet?.addEventListener('click', () => {
   magnetOffsets.x = latestRawMagnet.x;
   magnetOffsets.y = latestRawMagnet.y;
+  resetMagnetTracking();
   appendLog(`[MAGNET] Zero Captured: Offset X=${magnetOffsets.x.toFixed(2)} mm, Y=${magnetOffsets.y.toFixed(2)} mm\n`, 'log-okprompt');
 });
 
 function updateMagnetUI(posX_mm, posY_mm, angleDeg) {
-  if (!magnetDisk) return;
+  if (!magnetDisk || !isViewActive('view-magnet')) return;
   const safeX = typeof posX_mm === 'number' && !isNaN(posX_mm) ? posX_mm : 0;
   const safeY = typeof posY_mm === 'number' && !isNaN(posY_mm) ? posY_mm : 0;
-  const safeAngle = typeof angleDeg === 'number' && !isNaN(angleDeg) ? angleDeg : 0;
+  let safeAngle = typeof angleDeg === 'number' && !isNaN(angleDeg) ? angleDeg : 0;
 
-  const PIXELS_PER_MM = 30; 
-  const maxSquareExtent = 75; // +-2.5 mm travel limit
+  const ALPHA = 0.4;
+  if (!magnetState.inited) {
+    magnetState.emaX = safeX;
+    magnetState.emaY = safeY;
+    magnetState.emaAngle = safeAngle;
+    magnetState.inited = true;
+  } else {
+    magnetState.emaX += (safeX - magnetState.emaX) * ALPHA;
+    magnetState.emaY += (safeY - magnetState.emaY) * ALPHA;
+    const dA = ((safeAngle - magnetState.emaAngle + 540) % 360) - 180;
+    magnetState.emaAngle = ((magnetState.emaAngle + dA * ALPHA) % 360 + 360) % 360;
+  }
 
-  let transX = Math.max(-maxSquareExtent, Math.min(maxSquareExtent, safeX * PIXELS_PER_MM));
-  let transY = Math.max(-maxSquareExtent, Math.min(maxSquareExtent, -safeY * PIXELS_PER_MM));
+  magnetState.peakX = Math.max(magnetState.peakX, Math.abs(magnetState.emaX));
+  magnetState.peakY = Math.max(magnetState.peakY, Math.abs(magnetState.emaY));
 
-  magnetDisk.style.transform = `translate3d(${transX}px, ${transY}px, 0px) rotate(${safeAngle}deg)`;
+  const mmRange = Math.max(2.5, magnetState.peakX, magnetState.peakY) * 1.0;
+  const pxPerMm = GRID_HALF_PX / mmRange;
+
+  let transX = Math.max(-GRID_HALF_PX, Math.min(GRID_HALF_PX, magnetState.emaX * pxPerMm));
+  let transY = Math.max(-GRID_HALF_PX, Math.min(GRID_HALF_PX, -magnetState.emaY * pxPerMm));
+
+  magnetDisk.style.transform = `translate3d(${transX}px, ${transY}px, 0px) rotate(${magnetState.emaAngle}deg)`;
+
+  updateMagnetScaleLabels(mmRange);
 }
 
 // --- 3D Joystick UI ---
@@ -238,7 +292,7 @@ function initJoystickLEDs() {
 }
 
 function updateJoystickUI(x, y) {
-  if (!joystickStick) return;
+  if (!joystickStick || !isViewActive('view-joystick')) return;
   const safeX = typeof x === 'number' && !isNaN(x) ? x : 0;
   const safeY = typeof y === 'number' && !isNaN(y) ? y : 0;
   
@@ -256,6 +310,8 @@ function updateJoystickUI(x, y) {
   joystickStick.style.setProperty('--ty', renderY);
   leds.forEach(led => led.className = 'joystick__led');
 
+  pushRadarPoint(renderX, renderY);
+
   if (radius > 5) { 
     let angleDeg = Math.atan2(safeY, safeX) * (180 / Math.PI);
     if (angleDeg < 0) angleDeg += 360;
@@ -270,6 +326,116 @@ function updateJoystickUI(x, y) {
       }
     }
   }
+}
+
+// --- 2D Radar Scope (shared Joystick data) ---
+const radarCanvas = document.getElementById('radar-canvas');
+const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
+const radarReadout = document.getElementById('radar-readout');
+const radarState = { x: 0, y: 0, trail: [] };
+
+function pushRadarPoint(x, y) {
+  if (Math.hypot(x, y) < 0.1) {
+    radarState.x = 0;
+    radarState.y = 0;
+    radarState.trail.length = 0;
+    return;
+  }
+  radarState.trail.push({ x, y });
+  if (radarState.trail.length > 40) radarState.trail.shift();
+  radarState.x = x;
+  radarState.y = y;
+}
+
+function drawRadar() {
+  if (!radarCtx || !isViewActive('view-joystick')) return;
+
+  const { canvas } = radarCtx;
+  const size = canvas.width;
+  const cx = size / 2, cy = size / 2;
+  const R = size / 2 - 26;
+  const ctx = radarCtx;
+
+  ctx.clearRect(0, 0, size, size);
+
+  ctx.fillStyle = '#02050f';
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  [0.25, 0.5, 0.75, 1].forEach(f => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * f, 0, Math.PI * 2);
+    ctx.strokeStyle = f === 1 ? 'rgba(101,187,169,0.5)' : 'rgba(101,187,169,0.18)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  ctx.strokeStyle = 'rgba(101,187,169,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+  ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(169,184,201,0.65)';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('0°', cx + R + 14, cy);
+  ctx.fillText('90°', cx, cy - R - 13);
+  ctx.fillText('180°', cx - R - 14, cy);
+  ctx.fillText('270°', cx, cy + R + 13);
+
+  radarState.trail.forEach((p, i) => {
+    const px = cx + (p.x / 50) * R;
+    const py = cy + (p.y / 50) * R;
+    ctx.fillStyle = `rgba(101,187,169,${0.15 + (i / radarState.trail.length) * 0.45})`;
+    ctx.beginPath(); ctx.arc(px, py, 1.6, 0, Math.PI * 2); ctx.fill();
+  });
+
+  const bx = cx + (radarState.x / 50) * R;
+  const by = cy + (radarState.y / 50) * R;
+  const range = Math.min(50, Math.hypot(radarState.x, radarState.y));
+
+  const gradVec = ctx.createLinearGradient(cx, cy, bx, by);
+  gradVec.addColorStop(0, 'rgba(181,235,220,0.15)');
+  gradVec.addColorStop(1, 'rgba(101,187,169,0.95)');
+  ctx.strokeStyle = gradVec;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(169,184,201,0.85)';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(`${((range / 50) * 100).toFixed(0)}%`, bx + 10, by - 6);
+
+  if (range > 1) {
+    ctx.save();
+    ctx.shadowColor = '#65BBA9';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#65BBA9';
+    ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(101,187,169,0.5)';
+    ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  if (radarReadout) {
+    const azRaw = Math.atan2(-radarState.y, radarState.x) * (180 / Math.PI);
+    const az = azRaw < 0 ? azRaw + 360 : azRaw;
+    radarReadout.textContent = `Azimuth: ${az.toFixed(1)}° | Range: ${((range / 50) * 100).toFixed(0)}%`;
+  }
+}
+
+function startRadarLoop() {
+  if (!radarCtx) return;
+  const step = () => {
+    drawRadar();
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 // --- Console & Terminal Logging ---
@@ -289,6 +455,14 @@ function scheduleLogFlush() {
 function flushLog() {
   logFlushScheduled = false;
   if (!logQueue.length) return;
+
+  const miniVisible = !!miniLogWindow && !miniLogWindow.classList.contains('hidden');
+  const mainVisible = !!logWindow && isViewActive('view-terminal');
+  if (!miniVisible && !mainVisible) {
+    logTotalChars = 0;
+    logQueue.length = 0;
+    return;
+  }
 
   const frag = document.createDocumentFragment();
   let prevCls = null;
@@ -318,8 +492,8 @@ function flushLog() {
   commit();
   logQueue.length = 0;
 
-  if (miniLogWindow) miniLogWindow.appendChild(frag.cloneNode(true));
-  if (logWindow) logWindow.appendChild(frag);
+  if (miniVisible) miniLogWindow.appendChild(frag.cloneNode(true));
+  if (mainVisible) logWindow.appendChild(frag);
 
   if (logTotalChars > LOG_MAX_CHARS) {
     while (logTotalChars > LOG_TRIM_TO && logWindow && logWindow.firstChild) {
@@ -341,7 +515,6 @@ function flushLog() {
 
 function appendLog(text, cls) {
   if (!text) return;
-  console.log(`%c[SERIAL ${cls || 'INFO'}] ${text.trim()}`, 'color: #38bdf8');
   logQueue.push({ text, cls });
   scheduleLogFlush();
 }
@@ -488,6 +661,28 @@ function updateHistoryUI() {
 }
 
 // --- Connection Manager ---
+function getPortFilters() {
+  if (currentDriverType === 'arduino') {
+    // Common Arduino / serial-bridge chips only, so the picker isn't flooded
+    return { filters: [
+      { usbVendorId: 0x2341 },  // Arduino
+      { usbVendorId: 0x2a03 },  // Arduino (chipKIT/due)
+      { usbVendorId: 0x1a86 },  // CH340 / CH341
+      { usbVendorId: 0x10c4 },  // CP210x (Silicon Labs)
+      { usbVendorId: 0x0403 },  // FTDI
+      { usbVendorId: 0x303a },  // Espressif ESP32
+      { usbVendorId: 0x067b },  // Prolific PL2303
+    ]};
+  }
+  // Melexis SCPI: keep Melexis + common bridges the IO board might sit behind
+  return { filters: [
+    { usbVendorId: 0x03e9 },  // Melexis
+    { usbVendorId: 0x1a86 },
+    { usbVendorId: 0x10c4 },
+    { usbVendorId: 0x0403 },
+  ]};
+}
+
 function setUIConnected(connected) {
   isConnected = connected;
   btnConnect.textContent = connected ? 'Disconnect' : 'Connect USB';
@@ -497,8 +692,6 @@ function setUIConnected(connected) {
   if (txInput) txInput.disabled = !connected || currentDriverType === 'arduino';
   if (btnSend) btnSend.disabled = !connected || currentDriverType === 'arduino';
   if (btnStartDemo) btnStartDemo.disabled = !connected;
-  
-  initDeviceCommandButtons();
 
   const isScpi = connected && currentDriverType === 'scpi';
   ['nvram-addr', 'nvram-val', 'btn-nvram-read', 'btn-nvram-write', 'btn-nvram-dump', 'btn-nvram-hs', 'btn-nvram-hr'].forEach(id => {
@@ -512,7 +705,7 @@ async function connectSerial() {
     currentDriverType = selDriverType ? selDriverType.value : 'scpi';
     const baudRate = selBaudRate ? parseInt(selBaudRate.value, 10) : 115200;
 
-    port = await navigator.serial.requestPort();
+    port = await navigator.serial.requestPort(getPortFilters());
     await port.open({ baudRate });
 
     textDecoder = new TextDecoderStream();
@@ -564,6 +757,7 @@ async function disconnectSerial() {
   
   port = null; reader = null; writer = null; activeDevice = null;
   setUIConnected(false);
+  setDemoStatus('Idle', false);
   updateJoystickUI(0, 0);
   updateMagnetUI(0, 0);
   appendLog('[SYSTEM] Port closed.\n', 'log-badprompt');
@@ -574,6 +768,7 @@ async function runJoystickDemo() {
   btnStartDemo.disabled = true;
   btnStopDemo.disabled = false;
   isDemoRunning = true;
+  setDemoStatus('Running', true);
 
   if (isConnected && activeDevice) {
     try {
@@ -663,6 +858,7 @@ async function runJoystickDemo() {
     } catch (err) {
       appendLog(`[DEMO ERROR]: ${err.message}\n`, 'log-badprompt');
       isDemoRunning = false;
+      setDemoStatus('Error', false);
       btnStartDemo.disabled = false;
       btnStopDemo.disabled = true;
     }
@@ -756,7 +952,10 @@ selDriverType?.addEventListener('change', (e) => {
 
 btnConnect?.addEventListener('click', () => {
   if (isConnected) disconnectSerial();
-  else connectModal?.classList.remove('hidden');
+  else {
+    connectModal?.classList.remove('hidden');
+    refreshPortGuide();
+  }
 });
 
 btnCloseModal?.addEventListener('click', () => connectModal?.classList.add('hidden'));
@@ -778,6 +977,7 @@ btnStopDemo?.addEventListener('click', () => {
   isDemoRunning = false;
   btnStartDemo.disabled = false;
   btnStopDemo.disabled = true;
+  setDemoStatus('Idle', false);
   updateJoystickUI(0, 0); updateMagnetUI(0, 0);
   appendLog('[SYSTEM] Demo stopped.\n', 'log-badprompt');
 });
@@ -799,9 +999,9 @@ const layout3D = {
   paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
   scene: {
     aspectmode: 'cube',
-    xaxis: { title: 'Bx', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
-    yaxis: { title: 'By', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
-    zaxis: { title: 'Bz', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#1F3A62', zerolinecolor: '#DB4140' },
+    xaxis: { title: 'Bx', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#33588C', gridwidth: 1, showbackground: true, backgroundcolor: 'rgba(10,20,40,0.35)', zerolinecolor: '#DB4140', zerolinewidth: 2, dtick: 250 },
+    yaxis: { title: 'By', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#33588C', gridwidth: 1, showbackground: true, backgroundcolor: 'rgba(10,20,40,0.35)', zerolinecolor: '#DB4140', zerolinewidth: 2, dtick: 250 },
+    zaxis: { title: 'Bz', range: [-1000, 1000], color: '#A9B8C9', gridcolor: '#33588C', gridwidth: 1, showbackground: true, backgroundcolor: 'rgba(10,20,40,0.35)', zerolinecolor: '#DB4140', zerolinewidth: 2, dtick: 250 },
     bgcolor: 'rgba(0,0,0,0)'
   }
 };
@@ -824,6 +1024,8 @@ export function update3DVectorPlot(rx, ry, rz) {
   if (history3D.x.length > MAX_TRAIL_POINTS) {
     history3D.x.shift(); history3D.y.shift(); history3D.z.shift();
   }
+
+  if (!document.getElementById('plot-3d-container') || !isViewActive('view-3dplot')) return;
 
   Plotly.react('plot-3d-container', [
     traceOrigin,
