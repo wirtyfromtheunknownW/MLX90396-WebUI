@@ -18,6 +18,9 @@ let stdPlot = null;
 let mlxPlot = null;
 let joyAssemblyRef = null;
 
+// Twist signal/strength math, GAINSEL config and the Desmos calibration
+// live in twist_api.js (single source of truth for the Twist panel).
+
 // Call this function whenever real sensor data arrives from app.js
 export function updateSfiDomeKinematics(x, y, z) {
   isLiveHardwareConnected = true;

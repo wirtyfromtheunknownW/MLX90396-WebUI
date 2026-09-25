@@ -204,7 +204,8 @@
       overflow: hidden;
     }
     .magnet-sensor {
-      width: 340px; height: 340px; background: #0B2C40; border-radius: 6px;
+      width: min(88%, 700px); aspect-ratio: 1 / 1; max-height: 100%;
+      background: #0B2C40; border-radius: 6px;
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4); overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.15);
@@ -214,16 +215,16 @@
       pointer-events: none; user-select: none;
     }
     .magnet-disk {
-      width: 100px; height: 100px; border-radius: 50%;
+      width: 200px; height: 200px; border-radius: 50%;
       background: linear-gradient(to right, #2452D1 50%, #D13434 50%); 
-      position: absolute; top: 50%; left: 50%; margin-top: -50px; margin-left: -50px;
+      position: absolute; top: 50%; left: 50%; margin-top: -100px; margin-left: -100px;
       display: flex; align-items: center; justify-content: center;
       transform-origin: 50% 50%; box-sizing: border-box; border: 4px solid #1A1F26;
       box-shadow: 0 8px 20px rgba(0,0,0,0.6), inset 0 0 0 3px rgba(255,255,255,0.2);
       z-index: 10; opacity: 0.8;
     }
     .magnet-pole {
-      flex: 1; text-align: center; font-weight: 800; font-size: 1.3rem;
+      flex: 1; text-align: center; font-weight: 800; font-size: 2.3rem;
       text-shadow: 0 2px 4px rgba(0,0,0,0.6); user-select: none; pointer-events: none;
     }
     .magnet-arrow {
@@ -233,17 +234,6 @@
     }
     .arrow-icon { width: 28px; height: 28px; fill: currentColor; }
 
-    /* Terminal */
-    .log-window {
-      height: 320px; background: var(--color-code-bg); border-radius: 3px; padding: 12px;
-      font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
-      overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap;
-      border: 1.5px solid var(--color-border); color: var(--color-code-fg);
-    }
-    .log-echo { color: var(--color-info); } 
-    .log-rx { color: var(--color-ink-muted); } 
-    .log-okprompt { color: var(--color-accent); } 
-    .log-badprompt { color: var(--color-danger); }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -264,20 +254,16 @@
       <div class="demo-controls">
         <button id="btn-start-demo" class="ds-button ds-button--primary ds-button--md">Start</button>
         <button id="btn-stop-demo" class="ds-button ds-button--secondary ds-button--md" disabled>Stop</button>
-        <button id="btn-toggle-debug" class="ds-button ds-button--secondary ds-button--md">Debug</button>
         <span id="demo-status" class="demo-status">Idle</span>
       </div>
       <button id="btn-connect" class="ds-button ds-button--primary ds-button--md">Connect USB</button>
     </div>
 
-    <div id="mini-log-window" class="log-window hidden" style="height: 140px; margin-bottom: 16px; width: 100%;"></div>
-
-    <!-- MAIN TAB: JWT DEMO -->
     <div id="demo-jwt" class="demo-view active">
       <div class="ds-tabs" style="width: 100%; margin-bottom: 24px;">
         <div class="ds-tabs__list">
           <button class="ds-tabs__tab ds-tabs__tab--active tab-btn" data-target="view-joystick">Joystick</button>
-          <button class="ds-tabs__tab tab-btn" data-target="view-magnet">2D Magnet</button>
+          <button class="ds-tabs__tab tab-btn" data-target="view-magnet">Twist</button>
           <button class="ds-tabs__tab tab-btn" data-target="view-3dplot">3D Plot</button> 
         </div>
       </div>
@@ -285,7 +271,7 @@
       <!-- SUB-VIEW: 2D MAGNET PLANE -->
       <div id="view-magnet" class="view">
         <div class="ds-card ds-card--pad-md" style="width: 100%;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-evenly; align-items: center; margin-bottom: 0px;">
             <div>
               <h3 style="margin: 0; font-size: var(--font-size-md);">Diametrical Magnet Orientation</h3>
               <p id="magnet-travel-lbl" style="margin: 4px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
@@ -293,6 +279,10 @@
               </p>
             </div>
             <button id="btn-zero-magnet" class="ds-button ds-button--secondary ds-button--sm">Zero Position</button>
+            <button id="btn-toggle-twist" class="ds-button ds-button--secondary ds-button--sm">Signal &amp; Calibration</button>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: var(--font-size-sm); color: var(--color-ink-muted); user-select: none;">
+              <input type="checkbox" id="chk-magnet-lock-pos" /> Lock XY (twist only)
+            </label>
           </div>
           
           <div class="magnet-plane">
@@ -349,6 +339,95 @@
             </div>
           </div>
         </div>
+
+        <div id="twist-panel" class="hidden" style="width: 100%;">
+          <div class="ds-card ds-card--pad-md" style="width: 100%; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div>
+              <h3 style="margin: 0; font-size: var(--font-size-md);">Twist Signal &amp; Calibration</h3>
+              <p style="margin: 4px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+                Live &alpha;/&beta; angles and field strengths from the twisted magnet demo.
+                <span id="twist-unit-lbl">Units: mT</span>
+              </p>
+            </div>
+            <select id="sel-twist-mode" class="ds-field__input" style="width: auto; display: inline-block; min-height: 1.8rem; padding: 2px 8px;">
+              <option value="1px" selected>1px mode (single pixel · mT)</option>
+              <option value="2px">2px mode (differential · mT/mm)</option>
+            </select>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Alpha (calibrated)</div>
+              <div id="twist-alpha" style="font-size: 1.3rem; font-weight: 700; color: #59FFB0; font-family: ui-monospace, Consolas, monospace;">--.-&deg;</div>
+            </div>
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Beta (calibrated)</div>
+              <div id="twist-beta" style="font-size: 1.3rem; font-weight: 700; color: #59FFB0; font-family: ui-monospace, Consolas, monospace;">--.-&deg;</div>
+            </div>
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Alpha (raw)</div>
+              <div id="twist-alpha-raw" style="font-size: 1.1rem; font-weight: 600; color: var(--color-ink-muted); font-family: ui-monospace, Consolas, monospace;">--.-&deg;</div>
+            </div>
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Beta (raw)</div>
+              <div id="twist-beta-raw" style="font-size: 1.1rem; font-weight: 600; color: var(--color-ink-muted); font-family: ui-monospace, Consolas, monospace;">--.-&deg;</div>
+            </div>
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Alpha Strength</div>
+              <div id="twist-alpha-str" style="font-size: 1.1rem; font-weight: 700; color: #00d2ff; font-family: ui-monospace, Consolas, monospace;">--.-</div>
+            </div>
+            <div class="battle-box">
+              <div style="font-size: 10px; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 4px;">Beta Strength</div>
+              <div id="twist-beta-str" style="font-size: 1.1rem; font-weight: 700; color: #00d2ff; font-family: ui-monospace, Consolas, monospace;">--.-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-card ds-card--pad-md" style="width: 100%;">
+          <h3 style="margin: 0 0 12px 0; font-size: var(--font-size-md);">Gain &amp; Calibration Config</h3>
+          <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start;">
+            <div class="ds-field" style="width: 220px; margin-bottom: 0;">
+              <label class="ds-field__label" for="in-twist-gain">GAINSEL (electrical gain)</label>
+              <input id="in-twist-gain" type="number" min="0" max="63" step="1" class="ds-field__input" value="37" />
+              <small id="twist-gain-hint" style="display: block; margin-top: 4px; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+                1px gain = 37 (0b100101) &rarr; ~219
+              </small>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, 80px); gap: 10px;">
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-k1">k1</label>
+                <input id="cal-k1" type="number" step="any" class="ds-field__input" value="1" />
+              </div>
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-k2">k2</label>
+                <input id="cal-k2" type="number" step="any" class="ds-field__input" value="1" />
+              </div>
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-o11">o11</label>
+                <input id="cal-o11" type="number" step="any" class="ds-field__input" value="0" />
+              </div>
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-o12">o12</label>
+                <input id="cal-o12" type="number" step="any" class="ds-field__input" value="0" />
+              </div>
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-o21">o21</label>
+                <input id="cal-o21" type="number" step="any" class="ds-field__input" value="0" />
+              </div>
+              <div class="ds-field" style="margin-bottom: 0;">
+                <label class="ds-field__label" for="cal-o22">o22</label>
+                <input id="cal-o22" type="number" step="any" class="ds-field__input" value="0" />
+              </div>
+            </div>
+          </div>
+          <p style="margin: 12px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
+            a1 = atan2( &radic;(z1&sup2; + (k1&middot;(y1 &minus; o11&middot;z1))&sup2;), (x1 &minus; o12&middot;z1) )<br/>
+            b1 = atan2( &radic;(z1&sup2; + (k2&middot;(x1 &minus; o21&middot;z1))&sup2;), (y1 &minus; o22&middot;z1) )<br/>
+            Angles in degrees; calibration constants update live.
+          </p>
+        </div>
+        </div>
+
       </div>
 
       <!-- SUB-VIEW: 3D LIVE VECTOR PLOT -->
@@ -379,42 +458,6 @@
             <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--color-ink-muted); margin-bottom: 8px;">Radar Scope</div>
             <canvas id="radar-canvas" width="340" height="340" style="display: block;"></canvas>
             <div id="radar-readout" style="margin-top: 8px; font-size: 11px; font-family: ui-monospace, Consolas, monospace; color: var(--color-ink-muted);">Azimuth: 0.0° | Range: 0.0%</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SUB-VIEW: SCPI TERMINAL -->
-      <div id="view-terminal" class="view">
-        <div style="display: grid; grid-template-columns: 1fr 180px; gap: 16px;">
-          <div style="display: flex; flex-direction: column; gap: 12px;">
-            <div id="log-window" class="log-window"></div>
-            <div style="display: flex; gap: 8px;">
-              <div class="ds-field" style="width: 100%;">
-                <input type="text" id="tx-input" class="ds-field__input" placeholder="Type SCPI command..." disabled />
-              </div>
-              <button id="btn-send" class="ds-button ds-button--primary ds-button--md" disabled>Send</button>
-            </div>
-            <div style="display: flex; gap: 16px; align-items: center; font-size: var(--font-size-sm); color: var(--color-ink-muted);">
-              <label>EOL: 
-                <select id="sel-eol" class="ds-field__input" style="padding: 2px 8px; min-height: 1.8rem; width: auto; display: inline-block;">
-                  <option value="\n">LF</option>
-                  <option value="\r">CR</option>
-                  <option value="\r\n" selected>CRLF</option>
-                </select>
-              </label>
-              <label><input type="checkbox" id="chk-echo" checked> Local Echo</label>
-              <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
-              <button id="btn-clear" class="ds-button ds-button--secondary ds-button--sm" style="margin-left: auto;">Clear</button>
-            </div>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">Quick Cmds</h3>
-            <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd="*IDN?">*IDN?</button>
-            <button class="quick-cmd ds-button ds-button--secondary ds-button--sm" data-cmd=":SYST:INFO">:SYST:INFO</button>
-            <button class="quick-cmd ds-button ds-button--danger ds-button--sm" data-cmd="*RST">*RST</button>
-            <hr class="ds-divider" />
-            <h3 style="margin: 0; font-size: var(--font-size-sm); color: var(--color-ink-muted); text-transform: uppercase;">History</h3>
-            <div id="history-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto;"></div>
           </div>
         </div>
       </div>
@@ -558,9 +601,10 @@
             <label class="ds-field__label">Browser-Authorized Ports</label>
             <div id="port-guide" style="font-size: 12px; color: var(--color-ink-muted); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace;"></div>
             <p style="margin: 8px 0 0 0; font-size: var(--font-size-xs); color: var(--color-ink-muted);">
-              The Chrome port picker lists every serial device Windows detects (look for the Arduino VID <b>2341</b> or CH340 <b>1A86</b>). If yours is missing: install its USB driver, unplug &amp; replug, reboot, and close the Arduino IDE Serial Monitor if it's holding the port.
+              The Chrome picker lists every serial device Windows detects (no device filtering). If yours is missing: install its USB driver, unplug &amp; replug, reboot, and close apps holding the port (Arduino IDE Serial Monitor, vendor tools).
             </p>
           </div>
+          <div id="connect-error" class="hidden" style="margin-top: 14px; padding: 10px 12px; font-size: var(--font-size-sm); color: var(--color-danger); background: rgba(255, 90, 90, 0.08); border: 1px solid var(--color-danger); border-radius: 4px;"></div>
         </div>
         <div class="ds-modal__footer">
           <button id="btn-modal-connect" class="ds-button ds-button--primary ds-button--full">Open Serial Port</button>

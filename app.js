@@ -2,22 +2,20 @@ import { MLX90396_API } from './mlx_api.js';
 import { Arduino_API } from './arduino_api.js';
 // import { initSfiDemo, resizeSfiCanvases } from './sfi_demo.js';
 import { initSfiDemo, resizeSfiCanvases, updateSfiDomeKinematics } from './sfi_demo.js';
+import {
+  computeTwistSignals,
+  deriveTwistInputsFromPoints,
+  TWIST_CAL,
+  getGainSel,
+  setGainSel,
+} from './twist_api.js';
 
 // --- DOM Elements (Declared first to avoid TDZ ReferenceErrors) ---
 const btnConnect = document.getElementById('btn-connect');
-const btnClear = document.getElementById('btn-clear');
-const btnSend = document.getElementById('btn-send');
-const txInput = document.getElementById('tx-input');
-const logWindow = document.getElementById('log-window');
-const miniLogWindow = document.getElementById('mini-log-window'); 
-const selEol = document.getElementById('sel-eol');
-const chkEcho = document.getElementById('chk-echo');
-const chkAutoScroll = document.getElementById('chk-autoscroll');
 
 const btnStartDemo = document.getElementById('btn-start-demo');
 const btnStopDemo = document.getElementById('btn-stop-demo');
 const demoStatus = document.getElementById('demo-status');
-const historyList = document.getElementById('history-list');
 
 function setDemoStatus(text, isActive) {
   if (!demoStatus) return;
@@ -34,16 +32,7 @@ const connectModal = document.getElementById('connect-modal');
 const btnModalConnect = document.getElementById('btn-modal-connect');
 const btnCloseModal = document.getElementById('btn-close-modal');
 const portGuideEl = document.getElementById('port-guide');
-
-const VID_NAMES = {
-  0x2341: 'Arduino (official)',
-  0x2a03: 'Arduino (official)',
-  0x1a86: 'CH340 (common clones)',
-  0x0403: 'FTDI',
-  0x10c4: 'CP210x (Silicon Labs)',
-  0x303a: 'Espressif ESP32',
-  0x03e9: 'Melexis',
-};
+const connectErrorEl = document.getElementById('connect-error');
 
 async function refreshPortGuide() {
   if (!portGuideEl || !navigator.serial || !navigator.serial.getPorts) return;
@@ -54,13 +43,12 @@ async function refreshPortGuide() {
       return;
     }
     portGuideEl.innerHTML = '';
-    ports.forEach((p, i) => {
+    ports.forEach((p) => {
       const info = typeof p.getInfo === 'function' ? p.getInfo() : {};
       const vid = info.usbVendorId;
       const pid = info.usbProductId;
-      const name = vid != null ? (VID_NAMES[vid] || 'USB Serial Device') : 'Serial Port';
       const row = document.createElement('div');
-      row.textContent = `${name}  \u00b7  VID ${vid != null ? '0x' + vid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'} \u00b7 PID ${pid != null ? '0x' + pid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'}`;
+      row.textContent = `Serial Port  \u00b7  VID ${vid != null ? '0x' + vid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'}  \u00b7  PID ${pid != null ? '0x' + pid.toString(16).toUpperCase().padStart(4, '0') : 'n/a'}`;
       portGuideEl.appendChild(row);
     });
   } catch (err) {
@@ -68,29 +56,49 @@ async function refreshPortGuide() {
   }
 }
 
+function showConnectError(msg) {
+  if (connectErrorEl) {
+    connectErrorEl.textContent = msg || 'Unknown error.';
+    connectErrorEl.classList.remove('hidden');
+  }
+}
+
+function clearConnectError() {
+  if (connectErrorEl) {
+    connectErrorEl.classList.add('hidden');
+    connectErrorEl.textContent = '';
+  }
+}
+
+function hintForSerialError(raw) {
+  const s = String(raw);
+  if (s.includes('Failed to open serial port')) {
+    return 'Failed to open serial port. The port is almost certainly held open by another program \u2014 close the Arduino IDE Serial Monitor / vendor tools / other browser tabs, unplug & replug the device, then retry.';
+  }
+  if (s.includes('device not found') || s.includes('No such device')) {
+    return 'Device not found. Unplug & replug it, verify its driver is installed, and retry.';
+  }
+  return raw;
+}
+
 // 2D Magnet & UI Elements
 const magnetDisk = document.getElementById('magnet-disk');
 const btnZeroMagnet = document.getElementById('btn-zero-magnet');
+const chkMagnetLockPos = document.getElementById('chk-magnet-lock-pos');
 const joystickBase = document.getElementById('joystick-base');
 const joystickStick = document.getElementById('joystick-stick');
-
-if (selEol) selEol.value = '\\n';
 
 // --- State Variables ---
 let port = null, reader = null, writer = null;
 let isConnected = false, isReading = false, isDemoRunning = false;
 let textDecoder, textEncoder;
-let readableStreamClosed, writableStreamClosed; 
+let readableStreamClosed, writableStreamClosed;
 
 let activeDevice = null;
-let currentDriverType = 'scpi'; 
+let currentDriverType = 'scpi';
 
 let scpiLock = Promise.resolve();
-let scpiWaiter = null; 
-
-const history = [];
-let historyIndex = -1;
-let draftBeforeNav = '';
+let scpiWaiter = null;
 
 const magnetOffsets = { x: 0, y: 0 };
 const latestRawMagnet = { x: 0, y: 0 };
@@ -111,6 +119,7 @@ window.addEventListener('DOMContentLoaded', () => {
   startRadarLoop();
   initNvramControls();
   initGridReordering();
+  initTwistControls();
   refreshPortGuide();
 });
 
@@ -214,20 +223,23 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // --- 2D Magnet Position & UI ---
-const GRID_HALF_PX = 170; // magnet sensor is 340px = one full travel span
-const magnetState = { emaX: 0, emaY: 0, emaAngle: 0, peakX: 0, peakY: 0, inited: false };
+const magnetSensorEl = document.querySelector('.magnet-sensor');
+function gridHalfPx() {
+  const w = magnetSensorEl ? magnetSensorEl.clientWidth : 340;
+  return w / 2;
+}
+const magnetState = { emaX: 0, emaY: 0, emaAngle: 0, inited: false };
 
 function resetMagnetTracking() {
   magnetState.inited = false;
-  magnetState.peakX = 0;
-  magnetState.peakY = 0;
   updateMagnetScaleLabels(2.5);
 }
 
 function updateMagnetScaleLabels(mmRange) {
+  const half = Math.round(gridHalfPx());
   const travelLbl = document.getElementById('magnet-travel-lbl');
   if (travelLbl) {
-    travelLbl.innerHTML = `Travel Area: &plusmn;${mmRange.toFixed(1)} mm (&plusmn;170 px). South Pole (Red) tracks magnetic orientation.`;
+    travelLbl.innerHTML = `Sensing Grid: &plusmn;${mmRange.toFixed(1)} mm (&plusmn;${half} px). Disk positions on the grid and rotates with the twist angle.`;
   }
   const factor = mmRange / 2.5;
   document.querySelectorAll('.grid-tick').forEach(el => {
@@ -244,6 +256,16 @@ btnZeroMagnet?.addEventListener('click', () => {
   magnetOffsets.y = latestRawMagnet.y;
   resetMagnetTracking();
   appendLog(`[MAGNET] Zero Captured: Offset X=${magnetOffsets.x.toFixed(2)} mm, Y=${magnetOffsets.y.toFixed(2)} mm\n`, 'log-okprompt');
+});
+
+document.getElementById('btn-toggle-twist')?.addEventListener('click', () => {
+  const panel = document.getElementById('twist-panel');
+  const btn = document.getElementById('btn-toggle-twist');
+  if (panel) {
+    panel.classList.toggle('hidden');
+    if (btn) btn.classList.toggle('active', !panel.classList.contains('hidden'));
+    updateTwistUI(latestTwistPoints);
+  }
 });
 
 function updateMagnetUI(posX_mm, posY_mm, angleDeg) {
@@ -265,18 +287,93 @@ function updateMagnetUI(posX_mm, posY_mm, angleDeg) {
     magnetState.emaAngle = ((magnetState.emaAngle + dA * ALPHA) % 360 + 360) % 360;
   }
 
-  magnetState.peakX = Math.max(magnetState.peakX, Math.abs(magnetState.emaX));
-  magnetState.peakY = Math.max(magnetState.peakY, Math.abs(magnetState.emaY));
+  // Static grid: fixed +/-2.5 mm span. The scale never re-ranges, so a pure
+  // rotation can't rescale the map and make the disk jump. Position motion is
+  // EMA-smoothed and clamped at the grid edges; angle spins around the axis.
+  // "Lock XY" freezes position (angle-only spin) for twist demos.
+  const locked = chkMagnetLockPos ? chkMagnetLockPos.checked : false;
+  const mmRange = 2.5;
+  const half = gridHalfPx();
+  const pxPerMm = half / mmRange;
 
-  const mmRange = Math.max(2.5, magnetState.peakX, magnetState.peakY) * 1.0;
-  const pxPerMm = GRID_HALF_PX / mmRange;
+  const transX = locked ? 0 : Math.max(-half, Math.min(half, magnetState.emaX * pxPerMm));
+  const transY = locked ? 0 : Math.max(-half, Math.min(half, -magnetState.emaY * pxPerMm));
 
-  let transX = Math.max(-GRID_HALF_PX, Math.min(GRID_HALF_PX, magnetState.emaX * pxPerMm));
-  let transY = Math.max(-GRID_HALF_PX, Math.min(GRID_HALF_PX, -magnetState.emaY * pxPerMm));
+  // Sign inverted so a right/CW physical rotation renders as clockwise on
+  // screen (CSS rotate counts + as CW, but the raw angle from the device
+  // increases for the opposite direction).
+  magnetDisk.style.transform = `translate3d(${transX}px, ${transY}px, 0px) rotate(${-magnetState.emaAngle}deg)`;
 
-  magnetDisk.style.transform = `translate3d(${transX}px, ${transY}px, 0px) rotate(${magnetState.emaAngle}deg)`;
+  updateMagnetScaleLabels(2.5);
+}
 
-  updateMagnetScaleLabels(mmRange);
+// --- Twist Signal & Calibration UI ---
+let twistMode = '1px';
+
+function initTwistControls() {
+  const modeSel = document.getElementById('sel-twist-mode');
+  const gainInput = document.getElementById('in-twist-gain');
+  const unitLbl = document.getElementById('twist-unit-lbl');
+  const calKeys = ['k1', 'k2', 'o11', 'o12', 'o21', 'o22'];
+
+  modeSel?.addEventListener('change', () => {
+    twistMode = modeSel.value;
+    if (unitLbl) unitLbl.textContent = `Units: ${twistMode === '2px' ? 'mT/mm' : 'mT'}`;
+    syncTwistGainField(gainInput);
+    updateTwistUI(latestTwistPoints);
+  });
+
+  gainInput?.addEventListener('change', () => {
+    const v = parseInt(gainInput.value, 10);
+    if (!isNaN(v)) setGainSel(twistMode, v);
+    syncTwistGainField(gainInput);
+  });
+
+  calKeys.forEach(key => {
+    const el = document.getElementById(`cal-${key}`);
+    el?.addEventListener('input', () => {
+      const v = parseFloat(el.value);
+      if (!isNaN(v)) TWIST_CAL[key] = v;
+    });
+  });
+
+  syncTwistGainField(gainInput);
+}
+
+function syncTwistGainField(gainInput) {
+  if (!gainInput) return;
+  const g = getGainSel(twistMode);
+  gainInput.value = g;
+  const hint = document.getElementById('twist-gain-hint');
+  if (hint) {
+    hint.textContent = `${twistMode} gain = ${g} (0b${g.toString(2).padStart(6, '0')})`;
+  }
+}
+
+const latestTwistPoints = [];
+
+function updateTwistUI(points) {
+  const twistPanel = document.getElementById('twist-panel');
+  if (!isViewActive('view-magnet') || !twistPanel || twistPanel.classList.contains('hidden')) return;
+  if (!Array.isArray(points) || points.length < 4) return;
+
+  latestTwistPoints.splice(0, latestTwistPoints.length, ...points);
+
+  const input = deriveTwistInputsFromPoints(points);
+  const res = computeTwistSignals(twistMode, input);
+  const unit = res.unit;
+
+  const setTxt = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+
+  setTxt('twist-alpha', `${res.alphaCalDeg.toFixed(1)}\u00B0`);
+  setTxt('twist-beta', `${res.betaCalDeg.toFixed(1)}\u00B0`);
+  setTxt('twist-alpha-raw', `${res.alphaDeg.toFixed(1)}\u00B0`);
+  setTxt('twist-beta-raw', `${res.betaDeg.toFixed(1)}\u00B0`);
+  setTxt('twist-alpha-str', `${res.strengthAlpha.toFixed(2)} ${unit}`);
+  setTxt('twist-beta-str', `${res.strengthBeta.toFixed(2)} ${unit}`);
 }
 
 // --- 3D Joystick UI ---
@@ -438,85 +535,10 @@ function startRadarLoop() {
   requestAnimationFrame(step);
 }
 
-// --- Console & Terminal Logging ---
-const LOG_MAX_CHARS = 100000;
-const LOG_TRIM_TO = 80000;
-let logTotalChars = 0;
-let logQueue = [];
-let logFlushScheduled = false;
-
-function scheduleLogFlush() {
-  if (!logFlushScheduled) {
-    logFlushScheduled = true;
-    requestAnimationFrame(flushLog);
-  }
-}
-
-function flushLog() {
-  logFlushScheduled = false;
-  if (!logQueue.length) return;
-
-  const miniVisible = !!miniLogWindow && !miniLogWindow.classList.contains('hidden');
-  const mainVisible = !!logWindow && isViewActive('view-terminal');
-  if (!miniVisible && !mainVisible) {
-    logTotalChars = 0;
-    logQueue.length = 0;
-    return;
-  }
-
-  const frag = document.createDocumentFragment();
-  let prevCls = null;
-  let buf = '';
-
-  const commit = () => {
-    if (!buf) return;
-    const span = document.createElement('span');
-    if (prevCls) span.className = prevCls;
-    span.textContent = buf;
-    span.dataset.len = String(buf.length);
-    frag.appendChild(span);
-    logTotalChars += buf.length;
-    buf = '';
-  };
-
-  for (const item of logQueue) {
-    const cls = item.cls || '';
-    if (cls === prevCls) {
-      buf += item.text;
-    } else {
-      commit();
-      prevCls = cls;
-      buf = item.text;
-    }
-  }
-  commit();
-  logQueue.length = 0;
-
-  if (miniVisible) miniLogWindow.appendChild(frag.cloneNode(true));
-  if (mainVisible) logWindow.appendChild(frag);
-
-  if (logTotalChars > LOG_MAX_CHARS) {
-    while (logTotalChars > LOG_TRIM_TO && logWindow && logWindow.firstChild) {
-      const n = logWindow.firstChild;
-      let len = parseInt(n.dataset?.len || 0, 10) || n.textContent?.length || 0;
-      logTotalChars -= len;
-      logWindow.removeChild(n);
-    }
-    while (miniLogWindow && miniLogWindow.childNodes.length > (logWindow?.childNodes.length || 0)) {
-      miniLogWindow.removeChild(miniLogWindow.firstChild);
-    }
-  }
-
-  if (chkAutoScroll && chkAutoScroll.checked) {
-    if (logWindow) logWindow.scrollTop = logWindow.scrollHeight;
-    if (miniLogWindow) miniLogWindow.scrollTop = miniLogWindow.scrollHeight;
-  }
-}
-
+// --- Diagnostics Logging (console only; no visible terminal) ---
 function appendLog(text, cls) {
   if (!text) return;
-  logQueue.push({ text, cls });
-  scheduleLogFlush();
+  console.log(cls ? `[${cls}] ${text.replace(/\n$/, '')}` : text.replace(/\n$/, ''));
 }
 
 // --- Serial RX Router ---
@@ -589,37 +611,17 @@ function handlePrompt(line) {
 
 // --- SCPI Queries ---
 function getEol() {
-  if (!selEol) return '\n';
-  const v = selEol.value;
-  if (v === '\\n') return '\n';
-  if (v === '\\r') return '\r';
-  if (v === '\\r\\n') return '\r\n';
   return '\n';
 }
 
-async function sendCommand(cmd, echo = true, recordHistory = true) {
+async function sendCommand(cmd) {
   if (!writer) return;
-  const raw = cmd.trim();
+  const raw = String(cmd ?? '').trim();
   if (!raw) return;
-
-  const text = raw + getEol();
   try {
-    console.log('[TX SEND]', raw);
-    await writer.write(text);
-    if (echo && chkEcho && chkEcho.checked) appendLog(text, 'log-echo');
-    
-    if (recordHistory && history[0] !== raw) {
-      history.unshift(raw);
-      if (history.length > 50) history.pop();
-      updateHistoryUI();
-    }
-    
-    if (txInput) txInput.value = '';
-    historyIndex = -1;
-    draftBeforeNav = '';
+    await writer.write(raw + getEol());
   } catch (err) {
     console.error('[TX ERROR]', err);
-    appendLog(`[TX ERROR]: ${err.message}\n`, 'log-badprompt');
   }
 }
 
@@ -645,52 +647,13 @@ async function scpiQuery(cmd) {
   });
 }
 
-function updateHistoryUI() {
-  if (!historyList) return;
-  historyList.innerHTML = '';
-  history.forEach(item => {
-    const btn = document.createElement('button');
-    btn.className = 'ds-button ds-button--secondary ds-button--sm';
-    btn.textContent = item;
-    btn.style.textAlign = 'left';
-    btn.addEventListener('click', () => {
-      if (txInput) txInput.value = item;
-    });
-    historyList.appendChild(btn);
-  });
-}
-
 // --- Connection Manager ---
-function getPortFilters() {
-  if (currentDriverType === 'arduino') {
-    // Common Arduino / serial-bridge chips only, so the picker isn't flooded
-    return { filters: [
-      { usbVendorId: 0x2341 },  // Arduino
-      { usbVendorId: 0x2a03 },  // Arduino (chipKIT/due)
-      { usbVendorId: 0x1a86 },  // CH340 / CH341
-      { usbVendorId: 0x10c4 },  // CP210x (Silicon Labs)
-      { usbVendorId: 0x0403 },  // FTDI
-      { usbVendorId: 0x303a },  // Espressif ESP32
-      { usbVendorId: 0x067b },  // Prolific PL2303
-    ]};
-  }
-  // Melexis SCPI: keep Melexis + common bridges the IO board might sit behind
-  return { filters: [
-    { usbVendorId: 0x03e9 },  // Melexis
-    { usbVendorId: 0x1a86 },
-    { usbVendorId: 0x10c4 },
-    { usbVendorId: 0x0403 },
-  ]};
-}
-
 function setUIConnected(connected) {
   isConnected = connected;
   btnConnect.textContent = connected ? 'Disconnect' : 'Connect USB';
   if (connected) btnConnect.classList.add('btn-danger');
   else btnConnect.classList.remove('btn-danger');
-  
-  if (txInput) txInput.disabled = !connected || currentDriverType === 'arduino';
-  if (btnSend) btnSend.disabled = !connected || currentDriverType === 'arduino';
+
   if (btnStartDemo) btnStartDemo.disabled = !connected;
 
   const isScpi = connected && currentDriverType === 'scpi';
@@ -702,10 +665,15 @@ function setUIConnected(connected) {
 
 async function connectSerial() {
   try {
+    if (!navigator.serial) {
+      connectModal?.classList.remove('hidden');
+      showConnectError('This browser does not support the Web Serial API. Use Google Chrome or Microsoft Edge (desktop) \u2014 Firefox and Safari do not implement it.');
+      return;
+    }
     currentDriverType = selDriverType ? selDriverType.value : 'scpi';
     const baudRate = selBaudRate ? parseInt(selBaudRate.value, 10) : 115200;
 
-    port = await navigator.serial.requestPort(getPortFilters());
+    port = await navigator.serial.requestPort();
     await port.open({ baudRate });
 
     textDecoder = new TextDecoderStream();
@@ -742,7 +710,15 @@ async function connectSerial() {
     })();
 
   } catch (err) {
-    appendLog(`[CONN ERROR]: ${err.message}\n`, 'log-badprompt');
+    const raw = err && err.message ? err.message : String(err);
+    if (port) {
+      const failedPort = port;
+      port = null;
+      try { await failedPort.close(); } catch (_) { /* best effort */ }
+    }
+    appendLog(`[CONN ERROR]: ${raw}\n`, 'log-badprompt');
+    connectModal?.classList.remove('hidden');
+    showConnectError(`Could not connect: ${hintForSerialError(raw)}`);
   }
 }
 
@@ -828,6 +804,13 @@ async function runJoystickDemo() {
               posX_mm = latestRawMagnet.x - magnetOffsets.x;
               posY_mm = latestRawMagnet.y - magnetOffsets.y;
               rawX = avgX; rawY = avgY; rawZ = avgZ;
+
+              updateTwistUI([
+                { x: res01.x0, y: res01.y0, z: res01.z0 },
+                { x: res01.x1, y: res01.y1, z: res01.z1 },
+                { x: res23.x2, y: res23.y2, z: res23.z2 },
+                { x: res23.x3, y: res23.y3, z: res23.z3 },
+              ]);
             }
           } else {
             const sample = await activeDevice.getSample();
@@ -838,6 +821,10 @@ async function runJoystickDemo() {
               posY_mm = latestRawMagnet.y - magnetOffsets.y;
               angleDeg = sample.angleDeg;
               rawX = sample.rawX; rawY = sample.rawY; rawZ = sample.rawZ;
+
+              if (sample.points && sample.points.length === 4) {
+                updateTwistUI(sample.points);
+              }
             }
           }
 
@@ -874,6 +861,17 @@ async function runJoystickDemo() {
       updateMagnetUI(emulatedX, emulatedY, emulatedAngle);
       updateJoystickUI(emulatedX * 20, emulatedY * 20);
       update3DVectorPlot(Math.cos(angle) * 500, Math.sin(angle) * 500, 200);
+
+      // Synthetic 4-pixel twist field (rotating around Z, constant bias on Z)
+      const twistV = Math.sin(angle) * 6;
+      const twistW = Math.cos(angle) * 6;
+      const bias = 18;
+      updateTwistUI([
+        { x: twistV, y: twistW, z: bias },
+        { x: twistV - 3, y: twistW, z: bias },
+        { x: twistV + 3, y: twistW, z: bias },
+        { x: twistV, y: twistW - 3, z: bias },
+      ]);
 
       // Drive SFI Dome in emulation mode as well
       updateSfiDomeKinematics(emulatedX / 2, emulatedY / 2, 0);
@@ -953,23 +951,26 @@ selDriverType?.addEventListener('change', (e) => {
 btnConnect?.addEventListener('click', () => {
   if (isConnected) disconnectSerial();
   else {
+    clearConnectError();
     connectModal?.classList.remove('hidden');
+    if (!navigator.serial) {
+      if (btnModalConnect) btnModalConnect.disabled = true;
+      showConnectError('This browser does not support the Web Serial API. Use Google Chrome or Microsoft Edge (desktop).');
+    } else {
+      if (btnModalConnect) btnModalConnect.disabled = false;
+    }
     refreshPortGuide();
   }
 });
 
-btnCloseModal?.addEventListener('click', () => connectModal?.classList.add('hidden'));
+btnCloseModal?.addEventListener('click', () => {
+  clearConnectError();
+  connectModal?.classList.add('hidden');
+});
 
 btnModalConnect?.addEventListener('click', async () => {
   connectModal?.classList.add('hidden');
   await connectSerial();
-});
-
-btnSend?.addEventListener('click', () => sendCommand(txInput.value));
-btnClear?.addEventListener('click', () => { 
-  if (logWindow) logWindow.textContent = ''; 
-  if (miniLogWindow) miniLogWindow.textContent = ''; 
-  logTotalChars = 0; logQueue.length = 0; 
 });
 
 btnStartDemo?.addEventListener('click', runJoystickDemo);
@@ -980,14 +981,6 @@ btnStopDemo?.addEventListener('click', () => {
   setDemoStatus('Idle', false);
   updateJoystickUI(0, 0); updateMagnetUI(0, 0);
   appendLog('[SYSTEM] Demo stopped.\n', 'log-badprompt');
-});
-
-txInput?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); sendCommand(txInput.value); }
-});
-
-document.querySelectorAll('.quick-cmd').forEach(btn => {
-  btn.addEventListener('click', () => sendCommand(btn.dataset.cmd));
 });
 
 // --- 3D Vector Plot Setup ---
@@ -1039,8 +1032,4 @@ document.getElementById('btn-reset-3d-trail')?.addEventListener('click', () => {
   if (window.Plotly) {
     Plotly.react('plot-3d-container', [traceOrigin, { ...traceTrail, x: [], y: [], z: [] }, { ...traceLiveBall, x: [0], y: [0], z: [0] }], layout3D);
   }
-});
-
-document.getElementById('btn-toggle-debug')?.addEventListener('click', () => {
-  miniLogWindow?.classList.toggle('hidden');
 });
